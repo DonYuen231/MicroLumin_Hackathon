@@ -1,23 +1,32 @@
-# Recall User Loop
+# How to Use Recall
 
-Recall remembers the people you meet. You record a conversation on the glasses, the phone turns it into a profile, and the glasses remind you who the person is next time.
+Recall helps you remember the people you meet. You record a conversation on the MicroLumin M6 glasses, your phone turns it into a profile, and the next time you meet that person, the glasses show who they are and what you talked about.
 
 ```text
-Put on glasses -> Start recording -> Talk -> End recording
-                                                  |
-Meet them again <- Follow up <- Review profile <- Phone saves it
+Start recording -> Talk -> End recording -> Phone saves a profile
+       ^                                            |
+       |                                            v
+Meet them again <------- Follow up <------- Review the profile
 ```
+
+**Always tell the other person you're recording before you start.** The glasses have no recording light, so they announce each recording out loud, but that doesn't replace asking.
 
 ## Before you start
 
-Check these once before a session:
+You need three devices:
 
-- [ ] The laptop is on, with the backend and Cloudflare tunnel running.
-- [ ] The Samsung's **Mobile Hotspot** is on and set to **WPA2-Personal**. The glasses can't join WPA3.
-- [ ] **Recall** is open on the Samsung.
-- [ ] Your name and the backend URL are filled in under **Recall > Settings**.
-- [ ] For a live demo, **Demo speed** is on in **Recall > Settings**.
-- [ ] The glasses show the ready screen:
+| Device | What it does | What should be running |
+| --- | --- | --- |
+| **M6 glasses** | Records and shows the card | Recall, which opens as the Home screen |
+| **Samsung phone** | Connects everything and stores profiles | Mobile Hotspot and the Recall app |
+| **Laptop** | Builds the profiles | The backend and Cloudflare tunnel |
+
+Check these in order:
+
+1. **Laptop:** Make sure it's awake and the backend and tunnel are running. See [Commands for the setup person](#commands-for-the-setup-person).
+2. **Phone hotspot:** Open **Settings > Connections > Mobile Hotspot and Tethering > Mobile Hotspot** and turn it on. Security must be **WPA2-Personal**, because the glasses can't join WPA3.
+3. **Phone app:** Open **Recall** and leave the phone unlocked.
+4. **Glasses:** Put them on. If you don't see the ready screen below, press the Home button.
 
 ```text
 Recall                     ● Listening
@@ -30,153 +39,148 @@ or tap to record
 Phone connected
 ```
 
-Recall is now the Home screen on the glasses, so pressing Home returns here.
+You're ready when you see **● Listening** and **Phone connected**. The glasses don't need a USB cable.
 
 ## The loop
 
-### 1. Put on the glasses
+### 1. Start recording
 
-Look for **● Listening** at the top right and **Phone connected** at the bottom. While it waits for the start phrase, Recall saves no audio.
+Face the person from about 3 feet away, with only their face in view.
 
-### 2. Start recording
+**Tap the touchpad once** and hold your head still for 2 seconds. This is the most reliable way to start.
 
-Tell the person you're recording, then use either option:
+You can also say **"Hello, nice to meet you"**. Voice only keeps the recording if the glasses confirm a face and can reach the phone.
 
-| Option | What to do | Needs |
+You'll hear a beep and **"Recording started"**, and a timer appears at the top right.
+
+### 2. Check the screen
+
+| The glasses show | What it means | What to do |
 | --- | --- | --- |
-| **Tap (most reliable)** | Tap the touchpad once | Nothing else |
-| **Voice** | Look at the person and say **"Hello, nice to meet you"** | Their face centered, and the phone connected |
+| **A name and summary** | Recall knows this person | Swipe to see topics, follow-ups, and what to avoid |
+| **New person** | This is a first meeting | Keep talking |
+| **Look at their face** | No face found yet | Center them and hold still until you hear a rising tone |
 
-You'll hear a beep and **"Recording started"**. The top right changes to a timer such as `REC 00:12`.
+### 3. Have the conversation
 
-With voice, Recall deletes the audio and plays a low tone if it can't confirm a face within 15 seconds. It then goes back to listening.
+Recall builds the profile from what's said out loud. For the best result, make sure the conversation includes:
 
-With a tap, recording continues even if no face is found yet. The glasses show **Look at their face** and keep trying for about 20 seconds. A rising tone means the face was captured.
-
-### 3. See who it is
-
-| Result | What the glasses show | What gets saved |
-| --- | --- | --- |
-| **Someone you've met** | Their name and a short summary. Swipe for the full card, including follow-ups. | An update to their profile |
-| **Someone new** | `New person` | A new profile |
-
-### 4. Have the conversation
-
-For the best profile, make sure these are said out loud:
-
-- The person's **full name**. If the face isn't matched, Recall uses it to find their saved profile.
+- Their **full name**, such as "I'm Sam Rivera"
 - What they do
 - What you talked about
 - Anything you promised, such as "I'll send you that article tonight"
 - Anything they'd rather not discuss
 
-### 5. End recording
+### 4. End recording
 
-Use any of these:
+**Tap the touchpad once**, or say **"Goodbye, see you next time"** after at least 5 seconds.
 
-- Tap the touchpad once.
-- Say **"Goodbye, see you next time"** after at least 5 seconds of recording.
-- Stay silent for 20 seconds.
-- Reach the 10-minute limit.
+Recording also stops after 20 seconds of silence, at 10 minutes, or if the glasses come off.
 
-You'll hear two beeps and **"Recording finished"**. Recall returns to the ready screen by itself, so you don't need to reset anything. A tap can start the next recording right away, and voice works again after 5 seconds.
+You'll hear two beeps and **"Recording finished"**. The glasses return to the ready screen by themselves, so you can start the next conversation right away.
 
-### 6. Let the phone save it
+### 5. Check the phone
 
-Keep the glasses on the hotspot. As soon as a recording ends, the glasses tell the phone to transfer it. A 30-second check is the backup. The phone then automatically:
+The recording transfers automatically. Keep the glasses on the hotspot and wait, usually less than a minute, for one of these notifications:
 
-1. Pulls the photos and audio
-2. Reads the face
-3. Transcribes the conversation
-4. Writes or updates the profile
-5. Deletes the capture from the glasses
+- **Saved Sam Rivera** for someone new
+- **Updated Sam Rivera** for someone you've met before
 
-Within about a minute, a notification says **Saved Sam Rivera** or **Updated Sam Rivera**.
+Open **Recall > People** and tap the person to read or correct their profile. Tap **Save** if you change anything.
 
-### 7. Review the profile
+### 6. Follow up
 
-Open **Recall > People** on the phone and tap the person. You can fix the name or edit any field, then tap **Save**.
-
-### 8. Follow up
-
-If the conversation included something worth following up on, the LLM picks the timing and writes a draft. When it's due, you'll get a notification like:
+If you made a promise or there's a reason to reconnect, Recall picks a time and writes a draft. When it's due, you'll get a notification like:
 
 > **Follow up with Sam: send the RAG article**
 
-Tap **Open draft** to open a message or email with the text filled in. Replace any `[add link]`, add the recipient, and send it yourself. Recall never sends anything automatically.
+Tap **Open draft**, add the recipient, replace any `[add link]`, and send it yourself. **Recall never sends anything for you.**
 
-With Demo speed on, 1 hour passes in 10 seconds, and no follow-up takes longer than 1 minute.
+For a live demo, turn on **Recall > Settings > Demo speed**. One hour then passes in 10 seconds, and every follow-up appears within a minute.
 
-### 9. Meet them again
+### 7. Meet them again
 
-Say the start phrase or tap to record. If Recall recognizes the person, their name and summary appear on the first screen.
+Tap once while facing them. You'll hear a rising tone and see their name and summary. The new conversation is added to their existing profile.
 
-To check who someone is without recording:
+If the face doesn't match, Recall uses the full name from the conversation to find their profile.
 
-1. Hold the touchpad twice to reach **Recognize**.
-2. Aim at their face and tap.
-3. Read the name and summary, and swipe for more.
-4. Hold to return to the ready screen.
+## Controls and sounds
 
-## Controls
-
-| Gesture | Ready screen | While recording | Recognize |
-| --- | --- | --- | --- |
-| **Tap** | Start recording | End recording | Scan a face |
-| **Swipe** | Nothing | Show more of the card | Read the card |
-| **Hold** | Next mode | Nothing | Next mode |
-
-## Sounds
+| Touchpad | On the ready screen | While recording |
+| --- | --- | --- |
+| **Tap** | Start recording | End recording |
+| **Swipe** | Nothing | Show more of the card |
 
 | You hear | Meaning |
 | --- | --- |
-| One beep | Recording began |
-| "Recording started" | People nearby are being told it's recording |
-| Rising tone | Face captured, or recognized someone you've met |
-| Low tone | No face confirmed, so nothing was kept |
-| Two beeps and "Recording finished" | Recording saved |
+| One beep, then "Recording started" | Recording has begun |
+| Rising tone | Face captured or person recognized |
+| Low tone | No face confirmed, so a voice-started recording was discarded |
+| Two beeps, then "Recording finished" | Recording saved |
 
 ## If something goes wrong
 
-| What you see | What to do |
+| Problem | What to do |
 | --- | --- |
-| `Phone not connected` | Check that the hotspot is on and Recall is open on the Samsung. A tap still records. |
-| `Not worn` | Put the glasses on. A tap still records. |
-| No `● Listening` | Press Home on the glasses. |
-| Voice doesn't start | Say the whole phrase clearly, or tap instead. |
-| Low tone after the phrase | Center the person's face and try again. |
-| No **Saved** notification | Open **Recall > Captures** and tap **Get captures from glasses**. |
-| Capture failed on the phone | Check that the laptop is on, then use **Test backend** in Settings. If the tunnel restarted, update the backend URL. |
+| **Phone not connected** | Check that the hotspot is on and Recall is open on the phone. Tapping still records, and the recording transfers when the link returns. |
+| **Settings shows "A device tried to connect"** | Tap **Trust this device as the glasses** on the phone. |
+| **No ● Listening** | Press Home on the glasses. |
+| **Voice doesn't start** | Tap instead. |
+| **Name doesn't appear** | Face them from about 3 feet in good light and hold still. It may take a few seconds if Wi-Fi hiccups. |
+| **"Unknown" in People** | The name wasn't clear. Open the profile, fix the name, and tap **Save**. |
+| **No Saved notification after a minute** | Open **Recall > Captures** and tap **Get captures from glasses**. |
+| **A capture fails on the phone** | In **Settings**, tap **Test backend**. If the tunnel restarted, paste in its new URL. |
+| **You recorded by mistake** | Ask the setup person to delete it right away, before it transfers if possible. To remove a saved profile, open it and tap **Delete person**. |
 
-### adb commands
+## Known limits
 
-Run these in PowerShell from the repo root. Use `adb devices` to find `<glasses>`.
+- Recall handles one person per conversation.
+- Faces need decent light and a steady view. Blurry photos may not match.
+- Brief Wi-Fi drops can delay recognition during a conversation.
+- In a loud room, the voice phrases can be missed, so use the tap.
+- A nearby voice can't be told apart from yours. Only record conversations you're part of.
+
+## Commands for the setup person
+
+Run these from the repo root in PowerShell.
+
+**Start the backend and tunnel:**
+
+```powershell
+cd backend
+docker compose up -d --build
+cloudflared tunnel --url http://localhost:8000
+```
+
+If the tunnel URL changes, paste it into **Recall > Settings > Backend URL** and tap **Test backend**.
+
+**Install the glasses app:**
 
 ```powershell
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb devices
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+Push-Location glasses-app; .\gradlew.bat assembleDebug; Pop-Location
+& $adb -s <glasses> install -r -g glasses-app\app\build\outputs\apk\debug\app-debug.apk
+```
 
-# Open Recall
-& $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity
+**First-time setup only.** Unzip [the speech model](https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip), then push it and make Recall the Home screen:
 
-# Rejoin the hotspot
-& $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity --es wifi_ssid "<hotspot name>" --es wifi_password "<hotspot password>"
-
-# Restore the original Home screen
-& $adb -s <glasses> shell cmd package set-home-activity <launcher package>/<launcher activity>
-
-# Make Recall the Home screen again
+```powershell
+& $adb -s <glasses> push vosk-model-small-en-us-0.15 /sdcard/Android/data/app.recall.glasses/files/
 & $adb -s <glasses> shell cmd package set-home-activity app.recall.glasses/.MainActivity
 ```
 
-## Not proven on the M6 yet
+**Join the glasses to the hotspot.** The M6 has no usable Wi-Fi screen. Get the hotspot name and password from the team, and don't commit them:
 
-Run these before the demo:
+```powershell
+& $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity --es wifi_ssid "'<hotspot name>'" --es wifi_password "'<hotspot password>'"
+```
 
-- [ ] A real tap starts and ends a recording.
-- [ ] Hold and swipe work on the real touchpad.
-- [ ] "Hello, nice to meet you" and "Goodbye, see you next time" work with real speech in the room.
-- [ ] A tapped conversation creates a full profile.
-- [ ] **Open draft** opens a filled-in message on the Samsung.
-- [ ] A known person is recognized from a new photo. The 0.45 match threshold still needs tuning.
-- [ ] `Not worn` appears when the glasses come off.
-- [ ] Recall opens by itself after the glasses restart.
+Recall then keeps the glasses on that hotspot while it's on screen.
+
+**Restore the original Home screen:**
+
+```powershell
+& $adb -s <glasses> shell cmd package set-home-activity <launcher package>/<launcher activity>
+```
