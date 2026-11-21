@@ -1,0 +1,73 @@
+# Secrets (only .env.example is committed)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+.cloudflared/
+
+# Real people's faces and conversations: never commit these
+/captures/
+/phone-app/captures/
+/phone-app/app/captures/
+/glasses-app/captures/
+/glasses-app/app/captures/
+test-media/
+backend/tests/media/
+*.m4a
+
+# Model files (downloaded during the Docker build)
+*.onnx
+.insightface/
+/backend/models/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+
+# Android and Gradle
+.gradle/
+**/build/
+local.properties
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+*.iml
+.kotlin/
+
+# Keep the Gradle wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temp files
+*.log
+*.tmp
