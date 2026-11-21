@@ -1,0 +1,9 @@
+services:
+  backend:
+    build: .
+    env_file: .env
+    environment:
+      PRELOAD_FACE_ENGINE: "true"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

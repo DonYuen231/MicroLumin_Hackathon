@@ -25,6 +25,9 @@ backend/tests/media/
 .insightface/
 /backend/models/
 
+# Local third-party files: never commit
+/glasses-app/libs/
+
 # Python
 __pycache__/
 *.py[cod]

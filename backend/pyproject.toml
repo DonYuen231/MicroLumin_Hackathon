@@ -1,0 +1,42 @@
+[project]
+name = "recall-backend"
+version = "0.1.0"
+description = "Stateless backend for Recall: face vectors, transcription, profile writing."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+# Installed only in the Docker image (InsightFace often fails to build on Windows).
+face = [
+    "insightface>=0.7.3",
+    "onnxruntime>=1.18",
+    "numpy>=1.26,<2",
+    "opencv-python-headless>=4.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
