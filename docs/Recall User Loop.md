@@ -75,7 +75,7 @@ Recall builds the profile from what's said out loud. For the best result, make s
 
 **Tap the touchpad once**, or say **"Goodbye, see you next time"** after at least 5 seconds.
 
-Recording also stops after 20 seconds of silence, at 10 minutes, or if the glasses come off.
+Recording also stops after 20 seconds of silence or at 10 minutes.
 
 You'll hear two beeps and **"Recording finished"**. The glasses return to the ready screen by themselves, so you can start the next conversation right away.
 
