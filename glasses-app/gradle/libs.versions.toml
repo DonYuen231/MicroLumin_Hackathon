@@ -1,0 +1,13 @@
+[versions]
+agp = "9.5.2"
+json = "20240303"
+junit = "4.13.2"
+nanohttpd = "2.3.1"
+
+[libraries]
+json = { module = "org.json:json", version.ref = "json" }
+junit = { module = "junit:junit", version.ref = "junit" }
+nanohttpd = { module = "org.nanohttpd:nanohttpd", version.ref = "nanohttpd" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
