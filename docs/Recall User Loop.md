@@ -18,15 +18,18 @@ You need three devices:
 | Device | What it does | What should be running |
 | --- | --- | --- |
 | **M6 glasses** | Records and shows the card | Recall, which opens as the Home screen |
-| **Samsung phone** | Connects everything and stores profiles | Mobile Hotspot and the Recall app |
-| **Laptop** | Builds the profiles | The backend and Cloudflare tunnel |
+| **Samsung phone** | Processes recordings and stores profiles | The Recall app and mobile data |
+| **Laptop** | Builds the profiles and links the glasses to the phone | The backend, Cloudflare tunnel, and USB bridge |
+
+**For now, both the glasses and the phone must stay plugged into the laptop.** The wireless hotspot link dropped during testing, so USB is the supported setup.
 
 Check these in order:
 
-1. **Laptop:** Make sure it's awake and the backend and tunnel are running. See [Commands for the setup person](#commands-for-the-setup-person).
-2. **Phone hotspot:** Open **Settings > Connections > Mobile Hotspot and Tethering > Mobile Hotspot** and turn it on. Security must be **WPA2-Personal**, because the glasses can't join WPA3.
-3. **Phone app:** Open **Recall** and leave the phone unlocked.
-4. **Glasses:** Put them on. If you don't see the ready screen below, press the Home button.
+1. **Laptop:** Make sure it's awake and the backend and tunnel are running.
+2. **Cables:** Plug the glasses and the phone into the laptop, with USB debugging on.
+3. **USB bridge:** Start it and leave it running. See [Commands for the setup person](#commands-for-the-setup-person).
+4. **Phone app:** Open **Recall** and leave the phone unlocked.
+5. **Glasses:** Put them on. If you don't see the ready screen below, press the Home button.
 
 ```text
 Recall                     ● Listening
@@ -39,7 +42,7 @@ or tap to record
 Phone connected
 ```
 
-You're ready when you see **● Listening** and **Phone connected**. The glasses don't need a USB cable.
+You're ready when you see **● Listening** and **Phone connected**.
 
 ## The loop
 
@@ -81,7 +84,7 @@ You'll hear two beeps and **"Recording finished"**. The glasses return to the re
 
 ### 5. Check the phone
 
-The recording transfers automatically. Keep the glasses on the hotspot and wait, usually less than a minute, for one of these notifications:
+The recording transfers automatically. Keep both cables in and wait, usually less than a minute, for one of these notifications:
 
 - **Saved Sam Rivera** for someone new
 - **Updated Sam Rivera** for someone you've met before
@@ -122,11 +125,10 @@ If the face doesn't match, Recall uses the full name from the conversation to fi
 
 | Problem | What to do |
 | --- | --- |
-| **Phone not connected** | Check that the hotspot is on and Recall is open on the phone. Tapping still records, and the recording transfers when the link returns. |
-| **Settings shows "A device tried to connect"** | Tap **Trust this device as the glasses** on the phone. |
+| **Phone not connected** | Check both USB cables, that the USB bridge is still running, and that Recall is open on the phone. The bridge reconnects within a few seconds. Tapping still records, and the recording transfers when the link returns. |
 | **No ● Listening** | Press Home on the glasses. |
 | **Voice doesn't start** | Tap instead. |
-| **Name doesn't appear** | Face them from about 3 feet in good light and hold still. It may take a few seconds if Wi-Fi hiccups. |
+| **Name doesn't appear** | Face them from about 3 feet in good light and hold still. |
 | **"Unknown" in People** | The name wasn't clear. Open the profile, fix the name, and tap **Save**. |
 | **No Saved notification after a minute** | Open **Recall > Captures** and tap **Get captures from glasses**. |
 | **A capture fails on the phone** | In **Settings**, tap **Test backend**. If the tunnel restarted, paste in its new URL. |
@@ -136,7 +138,7 @@ If the face doesn't match, Recall uses the full name from the conversation to fi
 
 - Recall handles one person per conversation.
 - Faces need decent light and a steady view. Blurry photos may not match.
-- Brief Wi-Fi drops can delay recognition during a conversation.
+- The glasses currently need a USB cable to the laptop, because the wireless link isn't reliable yet.
 - In a loud room, the voice phrases can be missed, so use the tap.
 - A nearby voice can't be told apart from yours. Only record conversations you're part of.
 
@@ -153,6 +155,14 @@ cloudflared tunnel --url http://localhost:8000
 ```
 
 If the tunnel URL changes, paste it into **Recall > Settings > Backend URL** and tap **Test backend**.
+
+**Link the glasses and phone over USB.** Run this in Git Bash from the repo root and leave the window open:
+
+```bash
+sh scripts/usb-bridge.sh
+```
+
+It restores the link by itself if a cable is unplugged and plugged back in.
 
 **Install the glasses app:**
 
@@ -171,7 +181,7 @@ Push-Location glasses-app; .\gradlew.bat assembleDebug; Pop-Location
 & $adb -s <glasses> shell cmd package set-home-activity app.recall.glasses/.MainActivity
 ```
 
-**Join the glasses to the hotspot.** The M6 has no usable Wi-Fi screen. Get the hotspot name and password from the team, and don't commit them:
+**Optional: join the glasses to the hotspot.** This wireless setup isn't reliable yet, so don't use it for a demo. The hotspot must use **WPA2-Personal**, and the phone's **Glasses address** must be the glasses' Wi-Fi IP. Get the hotspot name and password from the team, and don't commit them:
 
 ```powershell
 & $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity --es wifi_ssid "'<hotspot name>'" --es wifi_password "'<hotspot password>'"

@@ -385,6 +385,12 @@ The M6 has no usable Wi-Fi screen, so a debug build joins the phone's hotspot ov
 & $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity --es wifi_ssid "<hotspot name>" --es wifi_password "<hotspot password>"
 ```
 
+### USB link (current demo setup)
+The hotspot link dropped during testing, so the demo runs with the glasses and phone both plugged into the laptop. Run this in Git Bash and leave it open:
+```bash
+sh scripts/usb-bridge.sh
+```
+
 ### Screen mirroring for the demo
 The audience can't see through the glasses, so mirror both screens to a laptop with `scrcpy` over adb: one window for the glasses and one for the phone. Test this early.
 
