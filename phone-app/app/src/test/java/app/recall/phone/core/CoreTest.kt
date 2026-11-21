@@ -64,7 +64,7 @@ class CoreTest {
                     Encounter("2026-11-21T15:30:00Z", "Worn Hackathon"),
                 ),
                 topics = listOf("Robotics"),
-                followUps = listOf("Send the article"),
+                followUps = listOf(FollowUp("Send the article")),
                 sinceYouMet = listOf("New role"),
                 avoid = listOf("Layoffs"),
                 spoken = listOf("Sam Rivera, ML engineer."),

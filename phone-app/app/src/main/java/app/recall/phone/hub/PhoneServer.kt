@@ -33,6 +33,7 @@ object HubStatus {
 class PhoneServer(
     private val recognizer: Recognizer,
     private val settings: SettingsStore,
+    private val onCaptureReady: () -> Unit = {},
 ) {
     private var server: EmbeddedServer<*, *>? = null
 
@@ -57,6 +58,10 @@ class PhoneServer(
             routing {
                 get("/health") { call.respondJson("""{"ok":true}""") }
                 post("/recognize") { handleRecognize(call) }
+                post("/captures/ready") {
+                    onCaptureReady()
+                    call.respondJson("""{"ok":true}""")
+                }
             }
         }.also { it.start(wait = false) }
         HubStatus.running.value = true

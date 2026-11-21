@@ -66,7 +66,9 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
     var headline by remember { mutableStateOf(original.headline) }
     var summary by remember { mutableStateOf(original.summary) }
     var topics by remember { mutableStateOf(original.topics.joinToString("\n")) }
-    var followUps by remember { mutableStateOf(original.followUps.joinToString("\n")) }
+    var followUps by remember {
+        mutableStateOf(original.followUps.joinToString("\n") { it.text })
+    }
     var avoid by remember { mutableStateOf(original.avoid.joinToString("\n")) }
     var sinceYouMet by remember { mutableStateOf(original.sinceYouMet.joinToString("\n")) }
     var links by remember { mutableStateOf(original.sharedLinks.joinToString("\n")) }
@@ -85,7 +87,10 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
             encounter.copy(notes = notes.getOrElse(i) { encounter.notes }.trim())
         },
         topics = topics.toLines(),
-        followUps = followUps.toLines(),
+        followUps = app.recall.phone.core.mergeEditedFollowUps(
+            original.followUps,
+            followUps.toLines(),
+        ),
         avoid = avoid.toLines(),
         sinceYouMet = sinceYouMet.toLines(),
         sharedLinks = links.toLines(),

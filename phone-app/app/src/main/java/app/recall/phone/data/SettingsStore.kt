@@ -2,6 +2,7 @@ package app.recall.phone.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -25,6 +26,8 @@ data class AppSettings(
     val wearerName: String = "",
     val place: String = "Worn Hackathon",
     val matchThreshold: Float = DEFAULT_THRESHOLD,
+    /** For live demos: one hour of follow-up timing passes in 10 seconds. */
+    val demoSpeed: Boolean = false,
 )
 
 /** Optional setup file pushed over adb, so the long token need not be typed on the phone. */
@@ -46,6 +49,7 @@ class SettingsStore(private val context: Context) {
         val wearerName = stringPreferencesKey("wearer_name")
         val place = stringPreferencesKey("place")
         val threshold = floatPreferencesKey("match_threshold")
+        val demoSpeed = booleanPreferencesKey("demo_speed")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map(::fromPreferences)
@@ -60,6 +64,7 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.wearerName] = value.wearerName.trim()
             prefs[Keys.place] = value.place.trim()
             prefs[Keys.threshold] = value.matchThreshold
+            prefs[Keys.demoSpeed] = value.demoSpeed
         }
     }
 
@@ -98,5 +103,6 @@ class SettingsStore(private val context: Context) {
         wearerName = prefs[Keys.wearerName].orEmpty(),
         place = prefs[Keys.place] ?: "Worn Hackathon",
         matchThreshold = prefs[Keys.threshold] ?: DEFAULT_THRESHOLD,
+        demoSpeed = prefs[Keys.demoSpeed] ?: false,
     )
 }

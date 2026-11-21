@@ -2,7 +2,14 @@ package app.recall.phone.core
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
+import kotlinx.serialization.json.buildJsonObject
 
 /** The JSON contract from README section 7 and 8. */
 val AppJson = Json {
@@ -45,6 +52,35 @@ data class Encounter(
     val notes: String = "",
 )
 
+/** [dueInHours] is null for a follow-up saved before timing existed, which is never scheduled. */
+@Serializable
+data class FollowUp(
+    val text: String,
+    val reason: String = "",
+    @SerialName("due_in_hours") val dueInHours: Double? = null,
+    val channel: String = "none",
+    val draft: String = "",
+)
+
+/** Saved profiles hold follow-ups as plain strings. Without this they would load empty. */
+object FollowUpListSerializer : JsonTransformingSerializer<List<FollowUp>>(
+    ListSerializer(FollowUp.serializer()),
+) {
+    override fun transformDeserialize(element: JsonElement): JsonElement {
+        val items = element as? JsonArray ?: return JsonArray(emptyList())
+        return JsonArray(
+            items.mapNotNull { item ->
+                when {
+                    item is JsonObject -> item
+                    item is JsonPrimitive && item.isString && item.content.isNotBlank() ->
+                        buildJsonObject { put("text", item) }
+                    else -> null
+                }
+            },
+        )
+    }
+}
+
 @Serializable
 data class Profile(
     val name: String = "Unknown",
@@ -52,7 +88,9 @@ data class Profile(
     val summary: String = "",
     val encounters: List<Encounter> = emptyList(),
     val topics: List<String> = emptyList(),
-    @SerialName("follow_ups") val followUps: List<String> = emptyList(),
+    @Serializable(with = FollowUpListSerializer::class)
+    @SerialName("follow_ups")
+    val followUps: List<FollowUp> = emptyList(),
     val avoid: List<String> = emptyList(),
     @SerialName("since_you_met") val sinceYouMet: List<String> = emptyList(),
     @SerialName("shared_links") val sharedLinks: List<String> = emptyList(),

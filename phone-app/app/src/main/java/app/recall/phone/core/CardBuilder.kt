@@ -7,6 +7,7 @@ import java.util.Locale
 
 private val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
 private const val MAX_GLANCE_CHARS = 60
+private const val MAX_GLANCE_SUMMARY_CHARS = 150
 
 fun parseInstant(value: String?): Instant? =
     value?.let { runCatching { Instant.parse(it) }.getOrNull() }
@@ -27,7 +28,7 @@ fun buildCard(profile: Profile, zone: ZoneId = ZoneId.systemDefault()): ProfileC
             if (text.isNotBlank()) add(DisplayItem("Last met", text))
         }
         profile.topics.forEach { add(DisplayItem("Talk about", it)) }
-        profile.followUps.forEach { add(DisplayItem("Follow up", it)) }
+        profile.followUps.forEach { add(DisplayItem("Follow up", it.text)) }
         profile.sinceYouMet.forEach { add(DisplayItem("Since you met", it)) }
         profile.avoid.forEach { add(DisplayItem("Avoid", it)) }
     }
@@ -43,14 +44,23 @@ fun buildCard(profile: Profile, zone: ZoneId = ZoneId.systemDefault()): ProfileC
     )
 }
 
-/** A promise the wearer owes comes first, then a topic. An avoid item is never shown here. */
+/** The summary of who this is comes first. An avoid topic is never shown here. */
 fun glanceLine(profile: Profile): String {
-    val candidates = profile.followUps + profile.topics
+    val summary = profile.summary.trim()
+    if (summary.isNotEmpty() && !mentionsAvoid(summary, profile.avoid)) return fitSummary(summary)
+    val candidates = profile.followUps.map { it.text } + profile.topics
     val line = candidates
         .map { it.trim() }
         .firstOrNull { it.isNotEmpty() && !mentionsAvoid(it, profile.avoid) }
         ?: profile.headline.trim()
     return line.take(MAX_GLANCE_CHARS)
+}
+
+/** Fits the glasses' five visible lines, and never cuts a word in half. */
+private fun fitSummary(text: String): String {
+    if (text.length <= MAX_GLANCE_SUMMARY_CHARS) return text
+    val cut = text.take(MAX_GLANCE_SUMMARY_CHARS - 1).substringBeforeLast(' ')
+    return cut.trimEnd(' ', ',', '.', ';') + "…"
 }
 
 private fun mentionsAvoid(text: String, avoid: List<String>): Boolean =

@@ -11,9 +11,12 @@ import app.recall.phone.core.MetAt
 import app.recall.phone.core.Profile
 import app.recall.phone.core.SyncRetryPolicy
 import app.recall.phone.core.TranscriptIn
+import app.recall.phone.core.bestFaceScore
+import app.recall.phone.core.matchByName
 import app.recall.phone.core.matchFace
 import app.recall.phone.core.parseInstant
 import app.recall.phone.data.PeopleRepository
+import app.recall.phone.data.PersonRecord
 import app.recall.phone.data.SettingsStore
 import app.recall.phone.net.BackendClient
 import app.recall.phone.net.BackendException
@@ -44,18 +47,27 @@ data class CaptureRunState(
     val items: List<CaptureItem> = emptyList(),
 )
 
+data class SavedCapture(
+    val personId: String,
+    val profile: Profile,
+    val updated: Boolean,
+    val metAt: Instant,
+)
+
 class CaptureProcessor(
     cacheDir: File,
     private val people: PeopleRepository,
     private val backend: BackendClient,
     private val glasses: GlassesClient,
     private val settings: SettingsStore,
-    private val onSaved: (personId: String, name: String, updated: Boolean) -> Unit =
-        { _, _, _ -> },
+    private val onSaved: suspend (SavedCapture) -> Unit = {},
 ) {
     private val workDir = File(cacheDir, "captures")
     private val lock = Mutex()
     private val retries = SyncRetryPolicy()
+
+    @Volatile
+    private var syncAgain = false
     private val mutableState = MutableStateFlow(CaptureRunState())
     val state: StateFlow<CaptureRunState> = mutableState
 
@@ -84,16 +96,24 @@ class CaptureProcessor(
 
     /** The 30-second check. It changes the screen only when there is something to process. */
     suspend fun syncInBackground() {
-        if (!lock.tryLock()) return
+        if (!lock.tryLock()) {
+            // A capture finished during this run, so look again as soon as it ends.
+            syncAgain = true
+            return
+        }
         var showing = false
         try {
-            val captures = glasses.list().captures.filter {
-                retries.shouldTry(it.captureId) || people.isProcessed(it.captureId)
-            }
-            if (captures.isEmpty()) return
-            showing = true
-            mutableState.value = CaptureRunState(running = true)
-            processAll(captures)
+            do {
+                syncAgain = false
+                val captures = glasses.list().captures.filter {
+                    retries.shouldTry(it.captureId) || people.isProcessed(it.captureId)
+                }
+                if (captures.isNotEmpty()) {
+                    showing = true
+                    mutableState.value = CaptureRunState(running = true)
+                    processAll(captures)
+                }
+            } while (syncAgain)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -169,7 +189,7 @@ class CaptureProcessor(
             // The glasses already matched this person. A deleted person falls back to the face.
             val taggedId = capture.personId
                 ?.takeIf { GlassesClient.SAFE_ID.matches(it) && people.person(it) != null }
-            val existingId = taggedId ?: findExisting(embeddings)
+            var existingId = taggedId ?: findExisting(embeddings)
             val existing = existingId?.let { people.person(it) }?.profile
             val current = settings.current()
             val metAt = MetAt(capture.startedAtOrNow(), current.place)
@@ -183,16 +203,26 @@ class CaptureProcessor(
                     if (current.wearerName.isBlank()) {
                         throw BackendException("not_configured", "Add your name in Settings.")
                     }
-                    setStep(id, "Writing profile")
-                    backend.buildProfile(
+                    suspend fun build(base: Profile?) = backend.buildProfile(
                         BuildProfileRequest(
                             transcript = TranscriptIn(transcript.segments),
                             wearerName = current.wearerName,
-                            existingProfile = existing,
+                            existingProfile = base,
                             metAt = metAt,
-                            sharedLinks = existing?.sharedLinks.orEmpty(),
+                            sharedLinks = base?.sharedLinks.orEmpty(),
                         ),
                     )
+                    setStep(id, "Writing profile")
+                    val built = build(existing)
+                    // The face did not match, so the full name said aloud is the backup.
+                    val named = if (existingId == null) findByName(built.name, embeddings) else null
+                    if (named != null) {
+                        existingId = named.id
+                        setStep(id, "Updating ${named.profile.name}")
+                        build(named.profile)
+                    } else {
+                        built
+                    }
                 }
             } else {
                 withoutConversation(existing, metAt)
@@ -201,7 +231,14 @@ class CaptureProcessor(
             setStep(id, "Saving")
             val thumbnail = faces.firstOrNull()?.let { (file, face) -> makeThumbnail(file, face) }
             val personId = people.saveCapture(existingId, profile, embeddings, thumbnail, id)
-            onSaved(personId, profile.name, existingId != null)
+            onSaved(
+                SavedCapture(
+                    personId = personId,
+                    profile = profile,
+                    updated = existingId != null,
+                    metAt = parseInstant(metAt.time) ?: Instant.now(),
+                ),
+            )
 
             setStep(id, "Removing from glasses")
             glasses.delete(id)
@@ -231,6 +268,14 @@ class CaptureProcessor(
             .maxByOrNull { it.score }
             ?.takeIf { it.runnerUpId == null }
             ?.personId
+    }
+
+    private suspend fun findByName(name: String, embeddings: List<FloatArray>): PersonRecord? {
+        val candidates = people.candidates()
+        val personId = matchByName(name, people.namedPeople()) { id ->
+            bestFaceScore(embeddings, candidates.firstOrNull { it.personId == id })
+        }
+        return personId?.let { people.person(it) }
     }
 
     private fun withoutConversation(existing: Profile?, metAt: MetAt): Profile {

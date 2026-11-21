@@ -2,6 +2,7 @@ package app.recall.phone.data
 
 import app.recall.phone.core.AppJson
 import app.recall.phone.core.FaceCandidate
+import app.recall.phone.core.NamedPerson
 import app.recall.phone.core.Profile
 import app.recall.phone.core.latestEncounter
 import app.recall.phone.core.toBytes
@@ -11,6 +12,7 @@ import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
@@ -37,6 +39,9 @@ class PeopleRepository(private val dao: RecallDao, filesDir: File) {
         dao.allVectors().groupBy { it.personId }.map { (personId, vectors) ->
             FaceCandidate(personId, vectors.map { it.vector.toFloats() })
         }
+
+    suspend fun namedPeople(): List<NamedPerson> =
+        dao.observePeople().first().map { NamedPerson(it.id, it.name) }
 
     suspend fun isProcessed(captureId: String): Boolean = dao.isProcessed(captureId)
 

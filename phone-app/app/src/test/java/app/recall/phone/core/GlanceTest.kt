@@ -10,10 +10,33 @@ class GlanceTest {
         name = "Sam Rivera",
         headline = "ML engineer at Acme",
         topics = listOf("Robotics side project"),
-        followUps = listOf("Send the RAG article"),
+        followUps = listOf(FollowUp("Send the RAG article")),
         avoid = listOf("Layoffs"),
         spoken = listOf("Sam Rivera, ML engineer."),
     )
+
+    @Test
+    fun `the summary comes first`() {
+        val profile = sam.copy(summary = "ML engineer at Acme building a robot arm at home.")
+        assertEquals(
+            Glance("Sam Rivera", "ML engineer at Acme building a robot arm at home."),
+            buildCard(profile).glance,
+        )
+    }
+
+    @Test
+    fun `a long summary is shortened on a word boundary`() {
+        val line = glanceLine(sam.copy(summary = "robot arm ".repeat(40)))
+        assertTrue(line.length <= 150)
+        assertTrue(line.endsWith("…"))
+        assertTrue(line.removeSuffix("…").split(' ').all { it == "robot" || it == "arm" })
+    }
+
+    @Test
+    fun `a summary mentioning an avoid topic is not shown`() {
+        val risky = sam.copy(summary = "Left after the layoffs last year.")
+        assertEquals("Send the RAG article", glanceLine(risky))
+    }
 
     @Test
     fun `a follow-up comes before a topic`() {
@@ -31,13 +54,13 @@ class GlanceTest {
 
     @Test
     fun `an avoid topic is never the glance line`() {
-        val risky = sam.copy(followUps = listOf("Ask about the layoffs"))
+        val risky = sam.copy(followUps = listOf(FollowUp("Ask about the layoffs")))
         assertEquals("Robotics side project", glanceLine(risky))
     }
 
     @Test
     fun `the line fits the display`() {
-        val long = sam.copy(followUps = listOf("x".repeat(90)))
+        val long = sam.copy(followUps = listOf(FollowUp("x".repeat(90))))
         assertEquals(60, glanceLine(long).length)
     }
 

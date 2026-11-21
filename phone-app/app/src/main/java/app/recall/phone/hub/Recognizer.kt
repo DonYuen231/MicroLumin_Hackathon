@@ -1,5 +1,7 @@
 package app.recall.phone.hub
 
+import android.util.Log
+import app.recall.phone.core.EmbedResponse
 import app.recall.phone.core.MatchDecision
 import app.recall.phone.core.RecognizeResponse
 import app.recall.phone.core.buildCard
@@ -9,6 +11,7 @@ import app.recall.phone.data.PeopleRepository
 import app.recall.phone.data.SettingsStore
 import app.recall.phone.net.BackendClient
 import app.recall.phone.net.BackendException
+import kotlinx.coroutines.delay
 
 class Recognizer(
     private val people: PeopleRepository,
@@ -17,9 +20,10 @@ class Recognizer(
 ) {
     suspend fun recognize(jpeg: ByteArray): RecognizeResponse {
         val embedding = try {
-            backend.embed(jpeg).faces.firstOrNull()?.embedding
+            embedWithRetry(jpeg).faces.firstOrNull()?.embedding
                 ?: return RecognizeResponse(match = false, reason = "no_face")
         } catch (e: BackendException) {
+            Log.i(TAG, "No face vector: ${e.title}")
             return when (e.title) {
                 "no_face", "multiple_faces" -> RecognizeResponse(false, reason = e.title)
                 else -> backupOrUnreachable()
@@ -30,8 +34,12 @@ class Recognizer(
         return when (
             val decision = matchFace(embedding.toFloatArray(), people.candidates(), threshold)
         ) {
-            is MatchDecision.NoMatch -> RecognizeResponse(false, reason = "no_match")
+            is MatchDecision.NoMatch -> {
+                Log.i(TAG, "No match. Best score ${decision.bestScore}, threshold $threshold")
+                RecognizeResponse(false, reason = "no_match")
+            }
             is MatchDecision.Match -> {
+                Log.i(TAG, "Match. Score ${decision.score}, close call ${decision.runnerUpId != null}")
                 val person = people.person(decision.personId)
                     ?: return RecognizeResponse(false, reason = "no_match")
                 val card = buildCard(person.profile)
@@ -44,6 +52,20 @@ class Recognizer(
                 )
             }
         }
+    }
+
+    /** A tunnel connection can go stale while idle, so a network failure gets one more try. */
+    private suspend fun embedWithRetry(jpeg: ByteArray): EmbedResponse = try {
+        backend.embed(jpeg)
+    } catch (e: BackendException) {
+        if (e.title != null) throw e
+        delay(RETRY_DELAY_MS)
+        backend.embed(jpeg)
+    }
+
+    private companion object {
+        const val TAG = "RecallMatch"
+        const val RETRY_DELAY_MS = 300L
     }
 
     /** The stage backup from README section 13. It is off until a person is chosen. */
