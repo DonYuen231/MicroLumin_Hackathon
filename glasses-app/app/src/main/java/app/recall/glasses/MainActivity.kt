@@ -22,6 +22,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.PointerIcon
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -30,6 +31,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import app.recall.glasses.core.AppController
+import app.recall.glasses.core.CameraSource
 import app.recall.glasses.core.CaptureServer
 import app.recall.glasses.core.CaptureStore
 import app.recall.glasses.core.LinkWatchdog
@@ -44,6 +46,7 @@ import app.recall.glasses.device.Camera2Source
 import app.recall.glasses.device.CardView
 import app.recall.glasses.device.ClipAnnouncer
 import app.recall.glasses.device.CrosshairView
+import app.recall.glasses.device.DemoCamera
 import app.recall.glasses.device.FallbackCameraSource
 import app.recall.glasses.device.GLASS_GREEN
 import app.recall.glasses.device.HttpPhoneClient
@@ -70,6 +73,9 @@ class MainActivity : Activity(), Ui {
     private lateinit var hintView: TextView
     private lateinit var cardView: CardView
     private lateinit var crosshair: CrosshairView
+    private lateinit var previewView: TextureView
+    private lateinit var demoCamera: DemoCamera
+    private var demoView = false
     private lateinit var controller: AppController
     private lateinit var input: InputMapper
     private lateinit var speaker: AndroidSpeaker
@@ -135,7 +141,13 @@ class MainActivity : Activity(), Ui {
         announcer = ClipAnnouncer(this, mainHandler)
         phoneClient = HttpPhoneClient(::phoneHost)
         controller = AppController(
-            camera = FallbackCameraSource(Camera2Source(this), Camera1Source()),
+            camera = object : CameraSource {
+                private val normal =
+                    FallbackCameraSource(Camera2Source(this@MainActivity), Camera1Source())
+
+                override fun takeStills(count: Int) =
+                    if (demoView) demoCamera.takeStills(count) else normal.takeStills(count)
+            },
             audio = RecorderAudioSource(),
             store = store,
             phone = phoneClient,
@@ -178,6 +190,7 @@ class MainActivity : Activity(), Ui {
         mainHandler.post(tick)
         wake()
         onScreen = true
+        if (demoView) demoCamera.start()
         controller.onForeground()
         publishStatus()
         val sensors = getSystemService(SensorManager::class.java)
@@ -211,6 +224,7 @@ class MainActivity : Activity(), Ui {
     override fun onStop() {
         getSystemService(SensorManager::class.java).unregisterListener(wearListener)
         onScreen = false
+        demoCamera.stop()
         publishStatus()
         linkTask?.cancel(false)
         mainHandler.removeCallbacks(tick)
@@ -303,6 +317,8 @@ class MainActivity : Activity(), Ui {
         hintView = label(20f)
         cardView = CardView(this)
         crosshair = CrosshairView(this)
+        previewView = TextureView(this).apply { visibility = View.GONE }
+        demoCamera = DemoCamera(previewView, mainHandler)
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -330,10 +346,22 @@ class MainActivity : Activity(), Ui {
         }
         return FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
+            addView(previewView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             addView(crosshair, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             addView(column, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             // A mouse pointer would float in the wearer's view.
             pointerIcon = PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL)
+        }
+    }
+
+    /** Puts the live camera behind the screen, so a recording looks like the wearer's view. */
+    private fun setDemoView(enabled: Boolean) {
+        demoView = enabled
+        previewView.visibility = if (enabled) View.VISIBLE else View.GONE
+        if (enabled) demoCamera.start() else demoCamera.stop()
+        val shadow = if (enabled) 6f else 0f
+        listOf(titleView, statusView, hintView, cardView).forEach {
+            it.setShadowLayer(shadow, 0f, 0f, Color.BLACK)
         }
     }
 
@@ -382,6 +410,10 @@ class MainActivity : Activity(), Ui {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable) return
         intent.getStringExtra(EXTRA_PHONE_HOST)?.let { phoneOverride = it }
+        if (intent.hasExtra(EXTRA_DEMO_VIEW)) {
+            setDemoView(intent.getBooleanExtra(EXTRA_DEMO_VIEW, false))
+            intent.removeExtra(EXTRA_DEMO_VIEW)
+        }
         if (intent.getBooleanExtra(EXTRA_TEST_LINK, false) && ::phoneClient.isInitialized) {
             intent.removeExtra(EXTRA_TEST_LINK)
             linkChecks.execute { phoneClient.captureReady() }
@@ -423,6 +455,7 @@ class MainActivity : Activity(), Ui {
         const val EXTRA_PHONE_HOST = "phone_host"
         const val EXTRA_PAIR_MOUSE = "pair_mouse"
         const val EXTRA_TEST_LINK = "test_link"
+        const val EXTRA_DEMO_VIEW = "demo_view"
         const val EXTRA_WIFI_SSID = "wifi_ssid"
         const val EXTRA_WIFI_PASSWORD = "wifi_password"
         const val VOICE_MODEL = "vosk-model-small-en-us-0.15"
