@@ -95,7 +95,12 @@ data class Profile(
     @SerialName("since_you_met") val sinceYouMet: List<String> = emptyList(),
     @SerialName("shared_links") val sharedLinks: List<String> = emptyList(),
     val spoken: List<String> = emptyList(),
+    @SerialName("common_interests") val commonInterests: List<String> = emptyList(),
 )
+
+/** A prepared profile pushed over adb for a demo. It updates the saved person with this name. */
+@Serializable
+data class ProfileSeed(val name: String, val profile: Profile)
 
 @Serializable
 data class MetAt(val time: String, val place: String = "")

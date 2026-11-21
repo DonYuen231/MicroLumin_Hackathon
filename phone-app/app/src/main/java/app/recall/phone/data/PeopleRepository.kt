@@ -4,6 +4,7 @@ import app.recall.phone.core.AppJson
 import app.recall.phone.core.FaceCandidate
 import app.recall.phone.core.NamedPerson
 import app.recall.phone.core.Profile
+import app.recall.phone.core.ProfileSeed
 import app.recall.phone.core.latestEncounter
 import app.recall.phone.core.toBytes
 import app.recall.phone.core.toFloats
@@ -55,10 +56,17 @@ class PeopleRepository(private val dao: RecallDao, filesDir: File) {
         val existing = existingId?.let { dao.person(it) }
         val id = existing?.id ?: "p_${UUID.randomUUID().toString().take(8)}"
         val thumbnailPath = thumbnail?.let { writeThumbnail(id, it) } ?: existing?.thumbnailPath
+        // The backend does not know this field, so a new conversation must not erase it.
+        val kept = existing?.let { toRecord(it).profile.commonInterests }.orEmpty()
+        val merged = if (profile.commonInterests.isEmpty()) {
+            profile.copy(commonInterests = kept)
+        } else {
+            profile
+        }
         val person = PersonEntity(
             id = id,
             name = profile.name,
-            profileJson = AppJson.encodeToString(Profile.serializer(), profile),
+            profileJson = AppJson.encodeToString(Profile.serializer(), merged),
             thumbnailPath = thumbnailPath,
             lastMetAt = latestEncounter(profile)?.time,
             createdAt = existing?.createdAt ?: Instant.now().toString(),
@@ -78,6 +86,31 @@ class PeopleRepository(private val dao: RecallDao, filesDir: File) {
                 lastMetAt = latestEncounter(profile)?.time,
             ),
         )
+    }
+
+    /** Applies and removes a prepared profile. Meeting history and links are kept. */
+    suspend fun applySeed(file: File) {
+        val text = withContext(Dispatchers.IO) {
+            if (file.exists()) runCatching { file.readText() }.getOrNull() else null
+        } ?: return
+        try {
+            val seed = AppJson.decodeFromString(ProfileSeed.serializer(), text)
+            val person = dao.observePeople().first()
+                .firstOrNull { it.name.equals(seed.name, ignoreCase = true) } ?: return
+            val current = toRecord(person).profile
+            updateProfile(
+                person.id,
+                seed.profile.copy(
+                    encounters = current.encounters,
+                    sinceYouMet = current.sinceYouMet,
+                    sharedLinks = current.sharedLinks,
+                ),
+            )
+        } catch (_: IllegalArgumentException) {
+            // A malformed file is ignored and still removed below.
+        } finally {
+            withContext(Dispatchers.IO) { file.delete() }
+        }
     }
 
     suspend fun setDemoBackup(id: String, enabled: Boolean) = dao.setDemoBackup(id, enabled)

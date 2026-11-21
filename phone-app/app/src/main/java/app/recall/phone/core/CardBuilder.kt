@@ -6,7 +6,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
-private const val MAX_GLANCE_CHARS = 60
+private const val MAX_GLANCE_ROW_CHARS = 38
 private const val MAX_GLANCE_SUMMARY_CHARS = 150
 
 fun parseInstant(value: String?): Instant? =
@@ -28,6 +28,7 @@ fun buildCard(profile: Profile, zone: ZoneId = ZoneId.systemDefault()): ProfileC
             if (text.isNotBlank()) add(DisplayItem("Last met", text))
         }
         profile.topics.forEach { add(DisplayItem("Talk about", it)) }
+        profile.commonInterests.forEach { add(DisplayItem("In common", it)) }
         profile.followUps.forEach { add(DisplayItem("Follow up", it.text)) }
         profile.sinceYouMet.forEach { add(DisplayItem("Since you met", it)) }
         profile.avoid.forEach { add(DisplayItem("Avoid", it)) }
@@ -44,16 +45,32 @@ fun buildCard(profile: Profile, zone: ZoneId = ZoneId.systemDefault()): ProfileC
     )
 }
 
-/** The summary of who this is comes first. An avoid topic is never shown here. */
+/**
+ * Up to five one-line rows, which is all the glasses show without scrolling. Avoid gets its own
+ * row and is never used as something to talk about. A sparse profile falls back to its summary.
+ */
 fun glanceLine(profile: Profile): String {
+    fun safe(items: List<String>) = items.map { it.trim() }
+        .firstOrNull { it.isNotEmpty() && !mentionsAvoid(it, profile.avoid) }
+
+    val rows = listOfNotNull(
+        profile.headline.trim().ifEmpty { null }?.let(::fitRow),
+        safe(profile.topics)?.let { fitRow("Talk: $it") },
+        safe(profile.commonInterests)?.let { fitRow("Both: $it") },
+        safe(profile.followUps.map { it.text })?.let { fitRow("Do: $it") },
+        profile.avoid.map { it.trim() }.firstOrNull { it.isNotEmpty() }
+            ?.let { fitRow("Avoid: $it") },
+    )
+    if (rows.size >= 2) return rows.joinToString("\n")
     val summary = profile.summary.trim()
     if (summary.isNotEmpty() && !mentionsAvoid(summary, profile.avoid)) return fitSummary(summary)
-    val candidates = profile.followUps.map { it.text } + profile.topics
-    val line = candidates
-        .map { it.trim() }
-        .firstOrNull { it.isNotEmpty() && !mentionsAvoid(it, profile.avoid) }
-        ?: profile.headline.trim()
-    return line.take(MAX_GLANCE_CHARS)
+    return rows.firstOrNull().orEmpty()
+}
+
+private fun fitRow(text: String): String {
+    if (text.length <= MAX_GLANCE_ROW_CHARS) return text
+    val cut = text.take(MAX_GLANCE_ROW_CHARS - 1).substringBeforeLast(' ')
+    return cut.trimEnd(' ', ',', '.', ';', ':') + "…"
 }
 
 /** Fits the glasses' five visible lines, and never cuts a word in half. */

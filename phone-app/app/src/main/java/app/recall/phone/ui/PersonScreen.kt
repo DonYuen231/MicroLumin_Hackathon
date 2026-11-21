@@ -69,6 +69,9 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
     var followUps by remember {
         mutableStateOf(original.followUps.joinToString("\n") { it.text })
     }
+    var commonInterests by remember {
+        mutableStateOf(original.commonInterests.joinToString("\n"))
+    }
     var avoid by remember { mutableStateOf(original.avoid.joinToString("\n")) }
     var sinceYouMet by remember { mutableStateOf(original.sinceYouMet.joinToString("\n")) }
     var links by remember { mutableStateOf(original.sharedLinks.joinToString("\n")) }
@@ -91,6 +94,7 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
             original.followUps,
             followUps.toLines(),
         ),
+        commonInterests = commonInterests.toLines(),
         avoid = avoid.toLines(),
         sinceYouMet = sinceYouMet.toLines(),
         sharedLinks = links.toLines(),
@@ -129,6 +133,9 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
             Field("Headline", headline) { headline = it }
             Field("Summary", summary, multiline = true) { summary = it }
             Field("Talk about (one per line)", topics, multiline = true) { topics = it }
+            Field("In common (one per line)", commonInterests, multiline = true) {
+                commonInterests = it
+            }
             Field("Follow ups (one per line)", followUps, multiline = true) { followUps = it }
             Field("Avoid (one per line)", avoid, multiline = true) { avoid = it }
             Field("Since you met (one per line)", sinceYouMet, multiline = true) {

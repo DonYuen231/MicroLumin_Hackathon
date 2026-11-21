@@ -12,6 +12,7 @@ import app.recall.phone.hub.PhoneServer
 import app.recall.phone.hub.Recognizer
 import app.recall.phone.net.BackendClient
 import app.recall.phone.net.GlassesClient
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,9 @@ class RecallApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        container.scope.launch { container.settings.applyProvisioning() }
+        container.scope.launch {
+            container.settings.applyProvisioning()
+            container.people.applySeed(File(filesDir, "seed_profile.json"))
+        }
     }
 }
