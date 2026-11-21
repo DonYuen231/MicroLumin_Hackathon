@@ -78,6 +78,7 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
     var spoken by remember { mutableStateOf(original.spoken.joinToString("\n")) }
     val notes = remember { mutableStateListOf(*original.encounters.map { it.notes }.toTypedArray()) }
     var isBackup by remember { mutableStateOf(person.isDemoBackup) }
+    var isLocked by remember { mutableStateOf(original.locked) }
     var confirmDelete by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var refreshing by remember { mutableStateOf(false) }
@@ -99,6 +100,7 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
         sinceYouMet = sinceYouMet.toLines(),
         sharedLinks = links.toLines(),
         spoken = spoken.toLines(),
+        locked = isLocked,
     )
 
     Column(
@@ -167,6 +169,24 @@ private fun PersonEditor(container: AppContainer, person: PersonRecord, onDone: 
                     onCheckedChange = { enabled ->
                         isBackup = enabled
                         scope.launch { container.people.setDemoBackup(person.id, enabled) }
+                    },
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Lock profile", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "New recordings of this person are discarded and never change this card.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = isLocked,
+                    onCheckedChange = { enabled ->
+                        isLocked = enabled
+                        scope.launch { container.people.setLocked(person.id, enabled) }
                     },
                 )
             }

@@ -47,7 +47,12 @@ class Recognizer(
                     match = true,
                     personId = person.id,
                     score = decision.score,
-                    card = if (decision.runnerUpId != null) confirmCard(card) else card,
+                    // A locked profile always shows its prepared card, even on a close call.
+                    card = if (decision.runnerUpId != null && !person.profile.locked) {
+                        confirmCard(card)
+                    } else {
+                        card
+                    },
                     capturePersonId = person.id.takeIf { decision.runnerUpId == null },
                 )
             }

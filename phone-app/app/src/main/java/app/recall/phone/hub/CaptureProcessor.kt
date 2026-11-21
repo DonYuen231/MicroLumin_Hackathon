@@ -14,6 +14,7 @@ import app.recall.phone.core.TranscriptIn
 import app.recall.phone.core.bestFaceScore
 import app.recall.phone.core.matchByName
 import app.recall.phone.core.matchFace
+import app.recall.phone.core.matchLockedName
 import app.recall.phone.core.parseInstant
 import app.recall.phone.data.PeopleRepository
 import app.recall.phone.data.PersonRecord
@@ -61,6 +62,7 @@ class CaptureProcessor(
     private val glasses: GlassesClient,
     private val settings: SettingsStore,
     private val onSaved: suspend (SavedCapture) -> Unit = {},
+    private val onLockedMatch: (personId: String, name: String) -> Unit = { _, _ -> },
 ) {
     private val workDir = File(cacheDir, "captures")
     private val lock = Mutex()
@@ -190,7 +192,12 @@ class CaptureProcessor(
             val taggedId = capture.personId
                 ?.takeIf { GlassesClient.SAFE_ID.matches(it) && people.person(it) != null }
             var existingId = taggedId ?: findExisting(embeddings)
-            val existing = existingId?.let { people.person(it) }?.profile
+            val existingPerson = existingId?.let { people.person(it) }
+            if (existingPerson?.profile?.locked == true) {
+                finishLocked(id, existingPerson)
+                return
+            }
+            val existing = existingPerson?.profile
             val current = settings.current()
             val metAt = MetAt(capture.startedAtOrNow(), current.place)
 
@@ -215,6 +222,13 @@ class CaptureProcessor(
                     setStep(id, "Writing profile")
                     val built = build(existing)
                     // The face did not match, so the full name said aloud is the backup.
+                    if (existingId == null) {
+                        val lockedId = matchLockedName(built.name, people.lockedPeople())
+                        lockedId?.let { people.person(it) }?.let {
+                            finishLocked(id, it)
+                            return
+                        }
+                    }
                     val named = if (existingId == null) findByName(built.name, embeddings) else null
                     if (named != null) {
                         existingId = named.id
@@ -268,6 +282,14 @@ class CaptureProcessor(
             .maxByOrNull { it.score }
             ?.takeIf { it.runnerUpId == null }
             ?.personId
+    }
+
+    /** A locked profile stays exactly as prepared, so this recording is dropped, not merged. */
+    private suspend fun finishLocked(id: String, person: PersonRecord) {
+        people.markCaptureProcessed(id, person.id)
+        onLockedMatch(person.id, person.profile.name)
+        setStep(id, "Removing from glasses")
+        glasses.delete(id)
     }
 
     private suspend fun findByName(name: String, embeddings: List<FloatArray>): PersonRecord? {

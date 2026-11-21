@@ -50,6 +50,7 @@ class AppContainer(app: Application) {
                 Log.w("RecallFollowUp", "Could not schedule: ${e.javaClass.simpleName}")
             }
         },
+        onLockedMatch = notifier::metAgain,
     )
     val server = PhoneServer(
         Recognizer(people, backend, settings),

@@ -51,6 +51,21 @@ class NameMatchTest {
     }
 
     @Test
+    fun `a locked profile matches on first or full name`() {
+        val locked = listOf(NamedPerson("p_avery", "Avery"))
+        assertEquals("p_avery", matchLockedName("Avery", locked))
+        assertEquals("p_avery", matchLockedName("avery smith", locked))
+        assertNull(matchLockedName("Sam", locked))
+    }
+
+    @Test
+    fun `placeholder names never match a locked profile`() {
+        val locked = listOf(NamedPerson("p_1", "Unknown"), NamedPerson("p_2", "Person A"))
+        assertNull(matchLockedName("Unknown", locked))
+        assertNull(matchLockedName("Person B", locked))
+    }
+
+    @Test
     fun `best face score uses every photo and vector`() {
         val candidate = FaceCandidate("p", listOf(floatArrayOf(1f, 0f), floatArrayOf(0f, 1f)))
         val photos = listOf(floatArrayOf(0.6f, 0.8f), floatArrayOf(1f, 0f))

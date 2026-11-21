@@ -32,6 +32,21 @@ fun matchByName(
     return person.id.takeIf { score == null || score >= NAME_MATCH_MIN_FACE_SCORE }
 }
 
+private fun firstName(name: String): String? = name.lowercase()
+    .replace(Regex("[^\\p{L}\\p{N}'-]+"), " ")
+    .trim()
+    .substringBefore(' ')
+    .takeIf { it.isNotEmpty() && it != "unknown" && it != "person" }
+
+/**
+ * A locked profile must stay the only card for that person, so a recording that names them is
+ * never saved as a duplicate, even with a first name or a photo too poor to match.
+ */
+fun matchLockedName(name: String, locked: List<NamedPerson>): String? {
+    val wanted = firstName(name) ?: return null
+    return locked.filter { firstName(it.name) == wanted }.singleOrNull()?.id
+}
+
 /** The best similarity between any new photo and any of this person's saved vectors. */
 fun bestFaceScore(embeddings: List<FloatArray>, candidate: FaceCandidate?): Float? =
     candidate?.vectors.orEmpty().flatMap { saved ->

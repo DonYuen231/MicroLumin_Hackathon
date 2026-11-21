@@ -96,6 +96,8 @@ data class Profile(
     @SerialName("shared_links") val sharedLinks: List<String> = emptyList(),
     val spoken: List<String> = emptyList(),
     @SerialName("common_interests") val commonInterests: List<String> = emptyList(),
+    /** A locked profile is never changed by a new recording. It can still be edited by hand. */
+    val locked: Boolean = false,
 )
 
 /** A prepared profile pushed over adb for a demo. It updates the saved person with this name. */

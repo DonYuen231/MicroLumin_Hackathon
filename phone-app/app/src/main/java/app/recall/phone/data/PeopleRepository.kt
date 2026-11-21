@@ -54,6 +54,10 @@ class PeopleRepository(private val dao: RecallDao, filesDir: File) {
         captureId: String,
     ): String {
         val existing = existingId?.let { dao.person(it) }
+        if (existing != null && toRecord(existing).profile.locked) {
+            dao.markProcessed(ProcessedCaptureEntity(captureId, existing.id))
+            return existing.id
+        }
         val id = existing?.id ?: "p_${UUID.randomUUID().toString().take(8)}"
         val thumbnailPath = thumbnail?.let { writeThumbnail(id, it) } ?: existing?.thumbnailPath
         // The backend does not know this field, so a new conversation must not erase it.
@@ -86,6 +90,19 @@ class PeopleRepository(private val dao: RecallDao, filesDir: File) {
                 lastMetAt = latestEncounter(profile)?.time,
             ),
         )
+    }
+
+    suspend fun lockedPeople(): List<NamedPerson> = dao.observePeople().first()
+        .map(::toRecord)
+        .filter { it.profile.locked }
+        .map { NamedPerson(it.id, it.profile.name) }
+
+    suspend fun markCaptureProcessed(captureId: String, personId: String) =
+        dao.markProcessed(ProcessedCaptureEntity(captureId, personId))
+
+    suspend fun setLocked(id: String, locked: Boolean) {
+        val current = person(id) ?: return
+        updateProfile(id, current.profile.copy(locked = locked))
     }
 
     /** Applies and removes a prepared profile. Meeting history and links are kept. */

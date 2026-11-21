@@ -37,6 +37,17 @@ class Notifier(context: Context) {
         manager.notify(personId.hashCode(), notification)
     }
 
+    /** The person was recognized, but their locked profile was left unchanged. */
+    fun metAgain(personId: String, name: String) {
+        val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_myplaces)
+            .setContentTitle("Met $name again")
+            .setContentIntent(openApp())
+            .setAutoCancel(true)
+            .build()
+        manager.notify(personId.hashCode(), notification)
+    }
+
     fun followUpDue(personId: String, name: String, followUp: FollowUp) {
         val id = followUpKey(personId, followUp.text).hashCode()
         val title = followUpTitle(name, followUp.text)
