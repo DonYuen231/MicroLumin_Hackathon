@@ -55,9 +55,10 @@ An iPhone version of the phone app is planned for later. It is not built for the
 - No recording indicator light.
 
 Design rules that follow from this:
-- Capture only on a click, and capture a few still photos, not video.
+- Capture starts on a spoken greeting or a click, and takes a few still photos, not video.
 - Audio is recorded to local storage and sent later, not streamed live.
-- The glasses do no heavy processing. No face detection or matching on the glasses.
+- The glasses do no heavy processing. The only speech work on the glasses is offline keyword spotting. No face detection or matching on the glasses.
+- Every recording is announced out loud, because the M6 has no recording light.
 - The glasses delete a capture's files once the phone confirms it received them.
 
 ## 4. Input
@@ -74,6 +75,23 @@ Every action must also work on the built-in touchpad, in case the M6 won't pair 
 
 ## 5. User flows
 
+### 5.0 Hands-free capture (the main flow)
+The wearer opens Recall on the glasses once. There is no mode to pick.
+
+1. While Recall is open, the glasses listen offline for the full phrase **"Hello, nice to meet you"**. Shorter greetings are ignored, because they misfire in a loud room. Nothing is saved while waiting.
+2. On a greeting, the glasses beep, start saving audio right away so the person's name isn't lost, and take 3 photos from the center of the camera view. One photo goes to the phone's `/recognize`.
+3. The result decides what happens:
+   - **Match:** the glance card appears, and the recording updates that person.
+   - **No match:** the recording becomes a new person.
+   - **No face, several faces, or the phone can't be reached:** the audio is deleted, a low tone plays, and the glasses keep listening. Nothing is kept without a confirmed face.
+4. Once a face is confirmed, the glasses say "Recording started".
+5. Recording ends on the full phrase **"Goodbye, see you next time"**, after 20 seconds of silence, on a tap, or at 10 minutes. The glasses beep and say "Recording finished".
+6. Greetings are ignored during a recording and for 5 seconds after one ends. Recall then returns to the ready screen by itself, so the next conversation needs no reset.
+
+**Single tap:** on the ready screen, one tap on the touchpad starts a recording and the next tap ends it. A tap is the wearer's own decision, so it records even if no face is confirmed.
+
+The phrases and timings are in `glasses-app/.../core/VoiceConfig.kt`. Click capture (5.1) and recognition (5.3) still work as the backup.
+
 ### 5.1 Capture mode (first meeting)
 1. The user switches to Capture mode. A crosshair appears in the center of the display.
 2. The user lines up the person's face in the crosshair and left-clicks.
@@ -81,9 +99,9 @@ Every action must also work on the built-in touchpad, in case the M6 won't pair 
 4. When the conversation ends, the user left-clicks again to stop recording. The capture is saved and marked "not sent".
 5. The user can start a new capture with the next person right away.
 
-### 5.2 Transfer and processing (later, at home or when ready)
-1. On the phone, the user taps "Get captures from glasses". The glasses must be on the phone's hotspot.
-2. The phone pulls every "not sent" capture from the glasses. The glasses delete each one after the phone confirms it.
+### 5.2 Transfer and processing (automatic)
+1. When a recording ends, the glasses call `POST /captures/ready` on the phone, and the phone transfers it right away. The phone's background service also checks every 30 seconds as a backup, and "Get captures from glasses" stays as a manual backup.
+2. The phone pulls every "not sent" capture from the glasses. The glasses delete each one after the phone confirms it. If the glasses can't be reached, the phone tries again on the next check. A capture that fails 3 times waits for the manual button.
 3. For each capture, the phone calls the backend in order:
    1. `POST /v1/faces/embed` for each photo, which returns face vectors.
    2. `POST /v1/audio/transcribe`, which returns a transcript with speaker labels.
@@ -91,7 +109,10 @@ Every action must also work on the built-in touchpad, in case the M6 won't pair 
 4. The phone checks whether the new face vectors match someone already saved:
    - If yes, the new conversation updates that person's profile.
    - If no, it creates a new person.
-5. The phone saves everything locally. The user can rename or fix anything on the phone.
+   - If the capture carries a `person_id` from a confident hands-free match, it updates that person directly.
+   - If the face doesn't match, the **full name** said in the conversation is the backup. It needs at least two words and exactly one saved person with that name. A photo that clearly shows someone else (similarity under 0.2) blocks the match.
+5. The phone saves everything locally and shows a notification such as "Saved Sam Rivera" or "Updated Sam Rivera". The user can rename or fix anything on the phone.
+6. The phone schedules each follow-up the LLM chose (section 8). When one is due, a notification such as "Follow up with Sam: send the RAG article" offers **Open draft**, which opens a message or email with the text filled in. Nothing is ever sent automatically. In Settings, **Demo speed** makes 1 hour pass in 10 seconds, with a 1-minute maximum per follow-up.
 
 ### 5.3 Recognition mode (meeting someone again)
 1. The user switches to Recognize mode, aims the crosshair at the face, and left-clicks.
@@ -99,7 +120,7 @@ Every action must also work on the built-in touchpad, in case the M6 won't pair 
 3. The phone sends the photo to the backend (`/v1/faces/embed`) and gets a vector back.
 4. The phone compares that vector to every saved vector (cosine similarity) and picks the best match above the threshold.
 5. The phone answers the glasses with that person's profile card, or "no match".
-6. The glasses show the card, and the user scrolls to read it before walking over.
+6. The glasses first show only the name and a short summary. Scrolling opens the rest of the card.
 7. The user can switch to Capture mode right away to record this new conversation.
 
 **Closed set only.** The app can only recognize people the user already saved. An unknown face returns "no match", and nothing is ever looked up by face.
@@ -145,10 +166,12 @@ Match:
 {
   "match": true,
   "person_id": "p_7f3a",
+  "capture_person_id": "p_7f3a",
   "score": 0.62,
   "card": {
     "name": "Sam Rivera",
     "headline": "ML engineer at Acme",
+    "glance": {"name": "Sam Rivera", "line": "Send the RAG article"},
     "display_items": [
       {"label": "Last met", "text": "Worn Hackathon, Nov 21, 2026"},
       {"label": "Talk about", "text": "Her robotics side project"},
@@ -172,6 +195,8 @@ No match:
 ```
 `reason` can also be `no_face`, `multiple_faces`, or `backend_unreachable`.
 
+`glance.line` is the person's summary, up to 150 characters. Without a usable summary, it falls back to the first open follow-up, then the first topic, then the headline. It never shows an avoid item. `capture_person_id` appears only on a confident match. It is left out for a close call between two people and for the stage backup card, so a recording can't update the wrong person.
+
 ### 7.2 Glasses app endpoints (called by the phone)
 
 The glasses app runs its own small HTTP server on port 8081, so the phone can pull captures. The phone finds the glasses' address in the hotspot's client list, or the user types it once in the phone's settings.
@@ -179,9 +204,10 @@ The glasses app runs its own small HTTP server on port 8081, so the phone can pu
 **`GET /captures`** lists captures not yet sent:
 ```json
 {"captures": [
-  {"capture_id": "c_20261121_101503", "started_at": "...", "ended_at": "...", "photos": 3, "has_audio": true}
+  {"capture_id": "c_20261121_101503", "started_at": "...", "ended_at": "...", "photos": 3, "has_audio": true, "person_id": "p_7f3a"}
 ]}
 ```
+`person_id` is optional. It is present when a hands-free recording started from a confident match.
 
 **`GET /captures/{capture_id}/photos/{n}`** returns a JPEG, where n starts at 0.
 
@@ -240,7 +266,15 @@ The backend returns this, and the phone stores it.
   "summary": "Met at the Worn Hackathon. Works on vision models, building a robot arm at home.",
   "encounters": [{"time": "...", "place": "Worn Hackathon", "notes": "Talked about RAG and robotics."}],
   "topics": ["robotics side project", "RAG evaluation"],
-  "follow_ups": ["Send the RAG article Don mentioned"],
+  "follow_ups": [
+    {
+      "text": "Send Sam the RAG article",
+      "reason": "Don promised to send it tonight.",
+      "due_in_hours": 6,
+      "channel": "message",
+      "draft": "Hi Sam, here's the RAG article I mentioned: [add link]"
+    }
+  ],
   "avoid": ["Her last company's layoffs"],
   "since_you_met": [],
   "shared_links": [],
@@ -256,6 +290,9 @@ Rules for the LLM:
 - If the name is not clear, use `"name": "Unknown"` so the user can fix it on the phone.
 - Keep each item short enough for a small green display, at most about 60 characters.
 - `spoken` holds at most 4 items and takes under about 20 seconds to read. The name always comes first, and "avoid" items are never included.
+- `follow_ups` is empty unless a follow-up is genuinely worth doing. The LLM picks `due_in_hours` (up to 720) and `channel` (`message`, `email`, or `none`).
+- `draft` is short, plain, and in first person as the wearer, at most 300 characters. It is empty when `channel` is `none`. It never contains a link (it uses `[add link]`) or anything from "avoid".
+- Older profiles that store follow-ups as plain strings still load.
 
 The phone builds the glasses card (section 7.1) from this profile.
 
@@ -289,21 +326,24 @@ The phone builds the glasses card (section 7.1) from this profile.
 - **Screens:**
   - **People list:** name, last met, and photo thumbnail.
   - **Person detail:** edit any field, plus a Delete person button.
-  - **Captures:** "Get captures from glasses", then progress for each step.
-  - **Settings:** backend URL, app token, glasses address, wearer name, and match threshold.
-- **Background server:** runs as a foreground service with a notification, so Android doesn't stop it while the phone is in a pocket.
+  - **Captures:** automatic sync progress, plus "Get captures from glasses" as a backup.
+  - **Settings:** backend URL, app token, glasses address, wearer name, match threshold, and Demo speed.
+- **Background server:** runs as a foreground service with a notification, so Android doesn't stop it while the phone is in a pocket. It also runs the 30-second capture check.
+- **Follow-ups:** scheduled with WorkManager. A follow-up is skipped if its person was deleted or it was removed from the profile.
 - **iPhone:** not built. Keep the network and storage code separate from the screens, so an iOS port is a clear next step for the pitch.
 
 ## 11. Glasses app details (for the glasses teammate)
 
 - **Screen:** green-only, so use high contrast, large text, at most 5 lines visible, and the scroll wheel to move.
-- **Modes:** Home, Capture, Recognize. A right click cycles through them.
+- **Hands-free:** listens with Vosk (`vosk-model-small-en-us-0.15`) whenever Recall is open, as described in 5.0.
+- **Recording notice:** a beep, a short vibration, and a bundled "Recording started" or "Recording finished" clip. These are audio files because the M6 has no text-to-speech engine.
+- **Modes:** Home, Capture, Recognize. A right click cycles through them. They remain as the click backup.
 - **Capture:** 3 photos and AAC audio into a capture folder. Show a small "REC" and the elapsed time while recording.
-- **Recognize:** 1 photo, `POST` it to the phone's `/recognize`, then show the card or "No match".
+- **Recognize:** 1 photo, `POST` it to the phone's `/recognize`, then show the glance or "No match". Scrolling opens the full card.
 - **Server:** serve captures to the phone (section 7.2), or use the push fallback.
 - **Voice:** use Android text-to-speech when the display is off, plus the sound cues from 5.4.
 - **Phone address:** find the phone at the Wi-Fi gateway address.
-- **Battery and heat:** camera on only during capture, no background work, screen dim when idle.
+- **Battery and heat:** camera on only during capture, no background work, screen dim when idle. The mic and keyword listener run only while Recall is on screen.
 
 ## 12. Running it
 
@@ -326,6 +366,24 @@ Do this only after the full demo works on the laptop.
 
 ### Phone app
 Open `phone-app/` in Android Studio, connect the phone with USB debugging on, and press Run. Or run `./gradlew installDebug`.
+
+### Glasses app
+Install over adb. The speech model (41 MB download) is pushed once and is not in Git or the APK.
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+Push-Location glasses-app; .\gradlew.bat assembleDebug; Pop-Location
+& $adb -s <glasses> install -r -g glasses-app\app\build\outputs\apk\debug\app-debug.apk
+# Unzip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip first
+& $adb -s <glasses> push vosk-model-small-en-us-0.15 /sdcard/Android/data/app.recall.glasses/files/
+& $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity
+```
+Without the model, Recall still runs with click controls. The top right of the screen says "Listening" when hands-free is active.
+
+The M6 has no usable Wi-Fi screen, so a debug build joins the phone's hotspot over adb. The network is saved for next time:
+```powershell
+& $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity --es wifi_ssid "<hotspot name>" --es wifi_password "<hotspot password>"
+```
 
 ### Screen mirroring for the demo
 The audience can't see through the glasses, so mirror both screens to a laptop with `scrcpy` over adb: one window for the glasses and one for the phone. Test this early.
@@ -351,6 +409,8 @@ The audience can't see through the glasses, so mirror both screens to a laptop w
 - One person per conversation. Group conversations are not supported yet.
 - No full video, by design, to save battery and limit heat.
 - Recording laws: New York requires only one party's consent to record a conversation you're part of, but some states require everyone's consent. The product would need a consent feature before release, and the M6 has no recording light.
+- Voice trigger: the mic can't tell who said a greeting. A nearby "hello" can start a recording if a face is in view, including a conversation the wearer isn't part of, which one-party consent doesn't cover. The spoken notice makes recording obvious, but it isn't consent.
+- Keyword spotting can mishear speech in a loud room, so a recording can start or stop by mistake.
 - Face data of other people is biometric data, which some states regulate (Illinois BIPA, for example). Closed-set matching and keeping all data on the user's phone limit this, but don't remove it.
 - Social media lookups only use links the person chose to share, and must follow each platform's terms.
 - InsightFace's pretrained models are non-commercial. A product would need a licensed model.
