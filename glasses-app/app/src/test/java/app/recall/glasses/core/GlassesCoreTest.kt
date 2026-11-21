@@ -294,6 +294,129 @@ class GlassesCoreTest {
     }
 
     @Test
+    fun greetingOnAKnownFaceRecordsAnUpdateForThatPerson() {
+        val mic = FakeVoiceMic()
+        val announcer = FakeAnnouncer()
+        val json = MATCH_JSON.replace("\"score\"", "\"capture_person_id\":\"p_1\",\"score\"")
+        val rig = Rig(result = parseRecognize(json), mic = mic, announcer = announcer)
+        rig.controller.onForeground()
+
+        mic.hear("hello")
+        assertTrue(rig.ui.last.recording)
+        assertEquals(1, rig.cues.starts)
+        assertEquals(1, rig.cues.matches)
+        assertEquals(1, announcer.started)
+        assertTrue("Must not read the card aloud mid-conversation", rig.speaker.spoken.isEmpty())
+        assertTrue("A recording must not be listed", store.list().isEmpty())
+
+        rig.time = T0.plusSeconds(6)
+        mic.hear("nice meeting you")
+        val saved = store.list().single()
+        assertEquals("p_1", saved.personId)
+        assertEquals(3, saved.photos)
+        assertTrue(saved.hasAudio)
+        assertEquals(1, rig.cues.stops)
+        assertEquals(1, announcer.finished)
+        assertTrue("Keeps listening for the next person", mic.listening)
+    }
+
+    @Test
+    fun greetingOnANewFaceRecordsWithoutAPerson() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(result = RecognizeResult.Failure("no_match"), mic = mic)
+        rig.controller.onForeground()
+        mic.hear("hi")
+        assertEquals("New person", rig.ui.last.title)
+        rig.controller.onInput(InputAction.Primary)
+        assertNull(store.list().single().personId)
+    }
+
+    @Test
+    fun aCloseMatchIsNotFiledUnderThatPerson() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(result = parseRecognize(MATCH_JSON), mic = mic)
+        rig.controller.onForeground()
+        mic.hear("hey")
+        rig.controller.onInput(InputAction.Primary)
+        assertNull(store.list().single().personId)
+    }
+
+    @Test
+    fun greetingWithNoFaceSavesNothingAndKeepsListening() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(result = RecognizeResult.Failure("no_face"), mic = mic)
+        rig.controller.onForeground()
+        mic.hear("hello")
+        assertEquals(1, rig.cues.noMatches)
+        assertFalse(mic.fileOpen)
+        assertTrue(root.list().orEmpty().none { it.startsWith("c_") })
+        assertTrue(mic.listening)
+        assertFalse(rig.ui.last.recording)
+    }
+
+    @Test
+    fun nothingIsRecordedWhenAFaceCannotBeConfirmed() {
+        listOf(REASON_PHONE_UNREACHABLE, "backend_unreachable", "multiple_faces").forEach { reason ->
+            val mic = FakeVoiceMic()
+            val rig = Rig(result = RecognizeResult.Failure(reason), mic = mic)
+            rig.controller.onForeground()
+            mic.hear("hello")
+            assertFalse(reason, rig.ui.last.recording)
+            assertFalse(reason, mic.fileOpen)
+            assertEquals(reason, 1, rig.cues.noMatches)
+            assertTrue(reason, root.list().orEmpty().none { it.startsWith("c_") })
+        }
+    }
+
+    @Test
+    fun silenceEndsAHandsFreeRecording() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        mic.hear("hello")
+        rig.time = T0.plusSeconds(20)
+        rig.controller.onTick()
+        assertEquals(1, store.list().size)
+    }
+
+    @Test
+    fun clickCaptureReleasesTheMicAndGetsItBack() {
+        val mic = FakeVoiceMic()
+        val announcer = FakeAnnouncer()
+        val rig = Rig(mic = mic, announcer = announcer)
+        rig.controller.onForeground()
+        assertTrue(mic.listening)
+        rig.controller.onInput(InputAction.SwitchMode)
+        rig.controller.onInput(InputAction.Primary)
+        assertFalse("MediaRecorder needs the mic", mic.listening)
+        assertEquals("A click recording is announced too", 1, announcer.started)
+        rig.controller.onInput(InputAction.Primary)
+        assertTrue(mic.listening)
+        assertEquals(1, announcer.finished)
+    }
+
+    @Test
+    fun leavingTheAppSavesAHandsFreeRecordingAndStopsTheMic() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        mic.hear("hello")
+        rig.controller.onBackground()
+        assertEquals(1, store.list().size)
+        assertFalse(mic.listening)
+    }
+
+    @Test
+    fun serverListsThePersonId() = withServer({ true }) { base ->
+        val id = store.newCapture(T0)
+        store.savePhotos(id, listOf(byteArrayOf(1)))
+        store.finish(id, T0, T1, "p_7f3a")
+        val capture = JSONObject(request("GET", "$base/captures").second)
+            .getJSONArray("captures").getJSONObject(0)
+        assertEquals("p_7f3a", capture.getString("person_id"))
+    }
+
+    @Test
     fun lateScanResultIsIgnoredAfterSwitchingModes() {
         val deferred = ArrayDeque<Runnable>()
         val rig = Rig(result = parseRecognize(MATCH_JSON), worker = Executor { deferred.add(it) })
@@ -357,7 +480,10 @@ class GlassesCoreTest {
         voice: Boolean = false,
         result: RecognizeResult = RecognizeResult.Failure("no_match"),
         worker: Executor = Executor { it.run() },
+        mic: VoiceMic = NoVoiceMic,
+        announcer: Announcer = NoAnnouncer,
     ) {
+        var time: Instant = T0
         val ui = FakeUi()
         val speaker = FakeSpeaker()
         val cues = FakeCues()
@@ -375,8 +501,10 @@ class GlassesCoreTest {
             ui = ui,
             worker = worker,
             main = Executor { it.run() },
-            now = { T0 },
+            now = { time },
             initialVoice = voice,
+            mic = mic,
+            announcer = announcer,
         ).also { it.refresh() }
 
         fun scan() {
@@ -429,13 +557,68 @@ class GlassesCoreTest {
 
     private class FakeCues : Cues {
         var matches = 0
-        override fun recordStart() = Unit
-        override fun recordStop() = Unit
+        var starts = 0
+        var stops = 0
+        var noMatches = 0
+
+        override fun recordStart() {
+            starts++
+        }
+
+        override fun recordStop() {
+            stops++
+        }
+
         override fun match() {
             matches++
         }
 
-        override fun noMatch() = Unit
+        override fun noMatch() {
+            noMatches++
+        }
+    }
+
+    private class FakeVoiceMic : VoiceMic {
+        private var events: VoiceEvents? = null
+        var fileOpen = false
+        override val ready = true
+        override var listening = false
+
+        override fun startListening(events: VoiceEvents) {
+            this.events = events
+            listening = true
+        }
+
+        override fun stopListening() {
+            listening = false
+        }
+
+        override fun clearHeard() = Unit
+
+        override fun startFile(file: File) {
+            file.writeBytes(byteArrayOf(7))
+            fileOpen = true
+        }
+
+        override fun stopFile(): Boolean {
+            fileOpen = false
+            return true
+        }
+
+        fun hear(text: String) = events!!.onPhrase(text)
+    }
+
+    private class FakeAnnouncer : Announcer {
+        var started = 0
+        var finished = 0
+
+        override fun started() {
+            started++
+        }
+
+        override fun finished() {
+            finished++
+        }
     }
 
     private class FakePairing : MousePairing {

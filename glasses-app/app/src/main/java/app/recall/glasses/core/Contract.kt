@@ -38,7 +38,12 @@ data class Card(
 }
 
 sealed interface RecognizeResult {
-    data class Match(val card: Card, val score: Double) : RecognizeResult
+    /** [capturePersonId] is set only when the phone is sure enough to file a recording here. */
+    data class Match(
+        val card: Card,
+        val score: Double,
+        val capturePersonId: String? = null,
+    ) : RecognizeResult
     data class Failure(val reason: String) : RecognizeResult
 }
 
@@ -62,7 +67,12 @@ fun parseRecognize(body: String): RecognizeResult = try {
     val json = JSONObject(body)
     val cardJson = json.optJSONObject("card")
     if (json.optBoolean("match") && cardJson != null) {
-        RecognizeResult.Match(parseCard(cardJson), json.optDouble("score", 0.0))
+        RecognizeResult.Match(
+            card = parseCard(cardJson),
+            score = json.optDouble("score", 0.0),
+            capturePersonId = json.optString("capture_person_id")
+                .takeIf { CaptureStore.SAFE_ID.matches(it) },
+        )
     } else {
         RecognizeResult.Failure(json.optString("reason", "unknown"))
     }
@@ -105,6 +115,51 @@ interface AudioSource {
 
     /** Returns true when the file holds playable audio. */
     fun stop(): Boolean
+}
+
+/** Called on the main thread. */
+interface VoiceEvents {
+    fun onPhrase(text: String)
+    fun onSpeech()
+}
+
+/** The always-open mic used for hands-free capture. */
+interface VoiceMic {
+    val ready: Boolean
+    val listening: Boolean
+
+    fun startListening(events: VoiceEvents)
+    fun stopListening()
+
+    /** Forgets words heard so far, so an ignored phrase cannot trigger later. */
+    fun clearHeard()
+
+    /** Starts saving the live audio to [file]. Nothing is saved before this. */
+    fun startFile(file: File)
+
+    /** Returns true when the file holds playable audio. */
+    fun stopFile(): Boolean
+}
+
+object NoVoiceMic : VoiceMic {
+    override val ready = false
+    override val listening = false
+    override fun startListening(events: VoiceEvents) = Unit
+    override fun stopListening() = Unit
+    override fun clearHeard() = Unit
+    override fun startFile(file: File) = error("No microphone")
+    override fun stopFile() = false
+}
+
+/** Tells people nearby, out loud, that a recording started or finished. */
+interface Announcer {
+    fun started()
+    fun finished()
+}
+
+object NoAnnouncer : Announcer {
+    override fun started() = Unit
+    override fun finished() = Unit
 }
 
 interface PhoneApi {

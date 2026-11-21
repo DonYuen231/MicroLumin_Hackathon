@@ -97,6 +97,7 @@ data class CaptureSummary(
     @SerialName("ended_at") val endedAt: String = "",
     val photos: Int = 0,
     @SerialName("has_audio") val hasAudio: Boolean = false,
+    @SerialName("person_id") val personId: String? = null,
 )
 
 @Serializable
@@ -125,4 +126,6 @@ data class RecognizeResponse(
     @SerialName("person_id") val personId: String? = null,
     val score: Float? = null,
     val card: ProfileCard? = null,
+    /** Set only for a confident match, so a hands-free recording cannot update the wrong person. */
+    @SerialName("capture_person_id") val capturePersonId: String? = null,
 )

@@ -40,6 +40,9 @@ class AppController(
     private val now: () -> Instant = Instant::now,
     initialVoice: Boolean = false,
     private val saveVoice: (Boolean) -> Unit = {},
+    private val mic: VoiceMic = NoVoiceMic,
+    private val announcer: Announcer = NoAnnouncer,
+    private val voiceConfig: VoiceConfig = VoiceConfig(),
 ) {
     private sealed interface CapturePhase {
         data object Idle : CapturePhase
@@ -70,11 +73,181 @@ class AppController(
     private var scan: ScanPhase = ScanPhase.Ready
     private var scanGeneration = 0
 
+    /** Set while the current capture was started by a greeting rather than a click. */
+    private class HandsFree {
+        var card: Card? = null
+        var personId: String? = null
+        var expanded = false
+    }
+
+    private var handsFree: HandsFree? = null
+    private var foreground = false
+    private val session = EventSession(voiceConfig)
+    private val micEvents = object : VoiceEvents {
+        override fun onPhrase(text: String) = onHeard(text)
+        override fun onSpeech() = session.onSpeech(nowMs())
+    }
+
     private val voiceActive get() = voice && speaker.available
 
     val isRecording get() = capture is CapturePhase.Recording
 
     fun refresh() = render()
+
+    /** The app is on screen, so it listens for a greeting. */
+    fun onForeground() {
+        foreground = true
+        syncListening()
+        render()
+    }
+
+    /** The speech model finished loading, or a permission changed. */
+    fun onVoiceReady() {
+        syncListening()
+        render()
+    }
+
+    /** Called once a second. */
+    fun onTick() {
+        if (session.onTick(nowMs()) == EventStep.Stop) {
+            mic.clearHeard()
+            stopCapture()
+        }
+        if (isRecording) render()
+    }
+
+    private fun nowMs() = now().toEpochMilli()
+
+    /** A click recording uses MediaRecorder, which needs the mic to itself. */
+    private fun syncListening() {
+        val clickCapture = capture != CapturePhase.Idle && handsFree == null
+        if (handsFree != null || (foreground && !clickCapture && mic.ready)) {
+            mic.startListening(micEvents)
+        } else {
+            mic.stopListening()
+        }
+    }
+
+    private fun onHeard(text: String) {
+        if (pairingState != null) return
+        if (handsFree == null && (capture != CapturePhase.Idle || scan == ScanPhase.Working)) return
+        when (session.onPhrase(text, nowMs())) {
+            EventStep.StartCapture -> {
+                mic.clearHeard()
+                startHandsFree()
+            }
+            EventStep.Stop -> {
+                mic.clearHeard()
+                stopCapture()
+            }
+            EventStep.ClearHeard -> mic.clearHeard()
+            null -> Unit
+        }
+    }
+
+    /**
+     * Audio starts at once, because the first words are usually the person's name. If the camera
+     * finds no face, that audio is deleted and the app goes back to listening.
+     */
+    private fun startHandsFree() {
+        val active = HandsFree()
+        val startedAt = now()
+        handsFree = active
+        capture = CapturePhase.Starting
+        stopWhenStarted = false
+        scanGeneration++
+        speaker.stop()
+        cues.recordStart()
+        render()
+        worker.execute {
+            var id: String? = null
+            var result: RecognizeResult? = null
+            try {
+                val newId = store.newCapture(startedAt).also { id = it }
+                mic.startFile(store.audioFile(newId))
+                val photos = camera.takeStills(voiceConfig.photos)
+                val checked = phone.recognize(photos.first())
+                if (keepsRecording(checked)) store.savePhotos(newId, photos)
+                result = checked
+            } catch (e: Exception) {
+                result = null
+            }
+            val kept = result?.let(::keepsRecording) == true
+            if (!kept) {
+                runCatching { mic.stopFile() }
+                id?.let { runCatching { store.discard(it) } }
+            }
+            val finalId = id
+            val finalResult = result
+            main.execute {
+                if (kept && finalId != null && finalResult != null) {
+                    onHandsFreeRecording(active, finalId, startedAt, finalResult)
+                } else {
+                    onHandsFreeCancelled()
+                }
+            }
+        }
+    }
+
+    /** Without a confirmed face in front of the wearer, this may be someone else's conversation. */
+    private fun keepsRecording(result: RecognizeResult): Boolean =
+        result is RecognizeResult.Match ||
+            (result as? RecognizeResult.Failure)?.reason == "no_match"
+
+    private fun onHandsFreeRecording(
+        active: HandsFree,
+        id: String,
+        startedAt: Instant,
+        result: RecognizeResult,
+    ) {
+        capture = CapturePhase.Recording(id, startedAt, hasAudio = true)
+        session.onRecording(nowMs())
+        if (result is RecognizeResult.Match) {
+            active.card = result.card
+            active.personId = result.capturePersonId
+            cues.match()
+        }
+        announcer.started()
+        render()
+        if (stopWhenStarted) stopCapture()
+    }
+
+    private fun onHandsFreeCancelled() {
+        capture = CapturePhase.Idle
+        handsFree = null
+        stopWhenStarted = false
+        session.onNoFace(nowMs())
+        cues.noMatch()
+        syncListening()
+        render()
+    }
+
+    private fun stopHandsFree(recording: CapturePhase.Recording, active: HandsFree) {
+        stopWhenStarted = false
+        session.onStopping()
+        capture = CapturePhase.Saving
+        render()
+        worker.execute {
+            val note = try {
+                val audioSaved = runCatching { mic.stopFile() }.getOrDefault(false)
+                if (!audioSaved) store.removeAudio(recording.id)
+                store.finish(recording.id, recording.startedAt, now(), active.personId)
+                if (audioSaved) "Saved" else "Saved, NO AUDIO"
+            } catch (_: Exception) {
+                "Save failed"
+            }
+            main.execute {
+                capture = CapturePhase.Idle
+                handsFree = null
+                captureNote = note
+                session.onFinished(nowMs())
+                cues.recordStop()
+                announcer.finished()
+                syncListening()
+                render()
+            }
+        }
+    }
 
     fun openPairing() {
         if (capture != CapturePhase.Idle) return
@@ -101,6 +274,7 @@ class AppController(
 
     /** The app left the screen. Save any recording, because the mic and camera must not stay on. */
     fun onBackground() {
+        foreground = false
         speaker.stop()
         closePairing()
         when (capture) {
@@ -108,11 +282,24 @@ class AppController(
             CapturePhase.Starting -> stopWhenStarted = true
             else -> Unit
         }
+        syncListening()
     }
 
     private fun onScroll(delta: Int) {
         val pairingNow = pairingState
+        val active = handsFree
         when {
+            active != null -> {
+                val card = active.card ?: return
+                if (card.glance != null && !active.expanded) {
+                    if (delta > 0) {
+                        active.expanded = true
+                        render()
+                    }
+                } else {
+                    ui.scrollBody(delta)
+                }
+            }
             pairingNow != null -> {
                 val last = (pairingNow.devices.size - 1).coerceAtLeast(0)
                 pairingIndex = (pairingIndex + delta).coerceIn(0, last)
@@ -151,6 +338,11 @@ class AppController(
     private fun onPrimary() {
         val pairingNow = pairingState
         when {
+            handsFree != null -> when (capture) {
+                is CapturePhase.Recording -> stopCapture()
+                CapturePhase.Starting -> stopWhenStarted = true
+                else -> Unit
+            }
             pairingNow != null -> pairingNow.devices.getOrNull(pairingIndex)?.let { pairing.pair(it.address) }
             mode == Mode.HOME -> activateMenu()
             mode == Mode.CAPTURE -> when (capture) {
@@ -213,6 +405,7 @@ class AppController(
         capture = CapturePhase.Starting
         captureNote = ""
         stopWhenStarted = false
+        syncListening()
         render()
         val startedAt = now()
         worker.execute {
@@ -239,18 +432,25 @@ class AppController(
             capture = CapturePhase.Idle
             captureNote = messageFor(REASON_CAMERA_FAILED)
             if (voiceActive) speaker.say(listOf(0 to captureNote))
+            syncListening()
             render()
             return
         }
         capture = recording
         captureNote = if (recording.hasAudio) "" else "NO AUDIO"
-        if (voiceActive) cues.recordStart()
+        // Always audible: the M6 has no recording light, so people nearby must be able to tell.
+        cues.recordStart()
+        announcer.started()
         render()
         if (stopWhenStarted) stopCapture()
     }
 
     private fun stopCapture() {
         val recording = capture as? CapturePhase.Recording ?: return
+        handsFree?.let {
+            stopHandsFree(recording, it)
+            return
+        }
         stopWhenStarted = false
         capture = CapturePhase.Saving
         render()
@@ -266,7 +466,9 @@ class AppController(
             main.execute {
                 capture = CapturePhase.Idle
                 captureNote = note
-                if (voiceActive) cues.recordStop()
+                cues.recordStop()
+                announcer.finished()
+                syncListening()
                 render()
             }
         }
@@ -314,14 +516,51 @@ class AppController(
 
     private fun render() {
         val state = pairingState
-        ui.render(
-            when {
-                state != null -> pairingScreen(state)
-                mode == Mode.HOME -> homeScreen()
-                mode == Mode.CAPTURE -> captureScreen()
-                else -> recognizeScreen()
-            },
-        )
+        val active = handsFree
+        val screen = when {
+            active != null -> handsFreeScreen(active)
+            state != null -> pairingScreen(state)
+            mode == Mode.HOME -> homeScreen()
+            mode == Mode.CAPTURE -> captureScreen()
+            else -> recognizeScreen()
+        }
+        val showListening = screen.status.isEmpty() && mic.listening
+        ui.render(if (showListening) screen.copy(status = "Listening") else screen)
+    }
+
+    private fun handsFreeScreen(active: HandsFree): Screen {
+        val phase = capture as? CapturePhase.Recording
+            ?: return Screen(
+                title = "Recall",
+                status = "REC",
+                body = if (capture == CapturePhase.Saving) "Saving" else "Looking...",
+                recording = true,
+            )
+        val seconds = Duration.between(phase.startedAt, now()).seconds.coerceAtLeast(0)
+        val status = "REC %02d:%02d".format(seconds / 60, seconds % 60)
+        val card = active.card
+        return when {
+            card == null -> Screen(
+                title = "New person",
+                status = status,
+                hint = "Click: stop",
+                recording = true,
+            )
+            card.glance != null && !active.expanded -> Screen(
+                title = card.glance.name,
+                status = status,
+                body = card.glance.line,
+                hint = "Scroll: more  Click: stop",
+                recording = true,
+            )
+            else -> Screen(
+                title = card.name,
+                status = status,
+                body = card.displayText(),
+                hint = "Scroll: read  Click: stop",
+                recording = true,
+            )
+        }
     }
 
     private fun homeScreen(): Screen {

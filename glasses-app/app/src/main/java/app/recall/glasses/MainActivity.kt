@@ -29,12 +29,14 @@ import app.recall.glasses.core.CaptureServer
 import app.recall.glasses.core.CaptureStore
 import app.recall.glasses.core.Screen
 import app.recall.glasses.core.Ui
+import app.recall.glasses.core.VoiceConfig
 import app.recall.glasses.core.dhcpIntToIp
 import app.recall.glasses.device.AndroidSpeaker
 import app.recall.glasses.device.BluetoothMouse
 import app.recall.glasses.device.Camera1Source
 import app.recall.glasses.device.Camera2Source
 import app.recall.glasses.device.CardView
+import app.recall.glasses.device.ClipAnnouncer
 import app.recall.glasses.device.CrosshairView
 import app.recall.glasses.device.FallbackCameraSource
 import app.recall.glasses.device.GLASS_GREEN
@@ -42,6 +44,7 @@ import app.recall.glasses.device.HttpPhoneClient
 import app.recall.glasses.device.InputMapper
 import app.recall.glasses.device.RecorderAudioSource
 import app.recall.glasses.device.ToneCues
+import app.recall.glasses.device.VoskMic
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -60,12 +63,14 @@ class MainActivity : Activity(), Ui {
     private lateinit var input: InputMapper
     private lateinit var speaker: AndroidSpeaker
     private lateinit var mouse: BluetoothMouse
+    private lateinit var voiceMic: VoskMic
+    private lateinit var announcer: ClipAnnouncer
     private var server: CaptureServer? = null
     private var phoneOverride: String? = null
 
     private val tick = object : Runnable {
         override fun run() {
-            if (controller.isRecording) controller.refresh()
+            controller.onTick()
             mainHandler.postDelayed(this, 1_000)
         }
     }
@@ -85,6 +90,13 @@ class MainActivity : Activity(), Ui {
 
         mouse = BluetoothMouse(this)
         speaker = AndroidSpeaker(this) { if (::controller.isInitialized) controller.refresh() }
+        val voiceConfig = VoiceConfig()
+        voiceMic = VoskMic(
+            modelDir = File(getExternalFilesDir(null), VOICE_MODEL),
+            phrases = voiceConfig.allPhrases,
+            main = mainHandler,
+        ) { if (::controller.isInitialized) controller.onVoiceReady() }
+        announcer = ClipAnnouncer(this, mainHandler)
         controller = AppController(
             camera = FallbackCameraSource(Camera2Source(this), Camera1Source()),
             audio = RecorderAudioSource(),
@@ -99,7 +111,11 @@ class MainActivity : Activity(), Ui {
             glassesIp = ::glassesIp,
             initialVoice = prefs.getBoolean(PREF_VOICE, false),
             saveVoice = { prefs.edit().putBoolean(PREF_VOICE, it).apply() },
+            mic = voiceMic,
+            announcer = announcer,
+            voiceConfig = voiceConfig,
         )
+        voiceMic.load()
         input = InputMapper { action ->
             wake()
             controller.onInput(action)
@@ -122,7 +138,16 @@ class MainActivity : Activity(), Ui {
         super.onStart()
         mainHandler.post(tick)
         wake()
-        controller.refresh()
+        controller.onForeground()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        controller.onVoiceReady()
     }
 
     override fun onStop() {
@@ -135,6 +160,9 @@ class MainActivity : Activity(), Ui {
     override fun onDestroy() {
         server?.stop()
         speaker.shutdown()
+        announcer.shutdown()
+        // Queued after any recording still being saved, so its audio file is closed first.
+        worker.execute { voiceMic.shutdown() }
         worker.shutdown()
         super.onDestroy()
     }
@@ -268,6 +296,7 @@ class MainActivity : Activity(), Ui {
         const val PREF_VOICE = "voice"
         const val EXTRA_PHONE_HOST = "phone_host"
         const val EXTRA_PAIR_MOUSE = "pair_mouse"
+        const val VOICE_MODEL = "vosk-model-small-en-us-0.15"
         const val PADDING = 24
         const val DIM_AFTER_MS = 45_000L
         const val DIM_BRIGHTNESS = 0.15f

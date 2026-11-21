@@ -166,7 +166,10 @@ class CaptureProcessor(
             setStep(id, "Reading faces")
             val faces = embedPhotos(photos)
             val embeddings = faces.map { it.second.embedding.toFloatArray() }
-            val existingId = findExisting(embeddings)
+            // The glasses already matched this person. A deleted person falls back to the face.
+            val taggedId = capture.personId
+                ?.takeIf { GlassesClient.SAFE_ID.matches(it) && people.person(it) != null }
+            val existingId = taggedId ?: findExisting(embeddings)
             val existing = existingId?.let { people.person(it) }?.profile
             val current = settings.current()
             val metAt = MetAt(capture.startedAtOrNow(), current.place)

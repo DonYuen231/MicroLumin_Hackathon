@@ -40,6 +40,7 @@ class Recognizer(
                     personId = person.id,
                     score = decision.score,
                     card = if (decision.runnerUpId != null) confirmCard(card) else card,
+                    capturePersonId = person.id.takeIf { decision.runnerUpId == null },
                 )
             }
         }

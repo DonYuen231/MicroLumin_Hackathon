@@ -56,15 +56,15 @@ class CaptureServer(
 
     private fun list(): Response {
         val captures = JSONArray()
-        store.list().forEach {
-            captures.put(
-                JSONObject()
-                    .put("capture_id", it.id)
-                    .put("started_at", it.startedAt)
-                    .put("ended_at", it.endedAt)
-                    .put("photos", it.photos)
-                    .put("has_audio", it.hasAudio),
-            )
+        store.list().forEach { info ->
+            val item = JSONObject()
+                .put("capture_id", info.id)
+                .put("started_at", info.startedAt)
+                .put("ended_at", info.endedAt)
+                .put("photos", info.photos)
+                .put("has_audio", info.hasAudio)
+            info.personId?.let { item.put("person_id", it) }
+            captures.put(item)
         }
         return json(Response.Status.OK, JSONObject().put("captures", captures).toString())
     }

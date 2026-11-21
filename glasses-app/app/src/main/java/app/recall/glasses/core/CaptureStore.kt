@@ -14,6 +14,7 @@ data class CaptureInfo(
     val endedAt: String,
     val photos: Int,
     val hasAudio: Boolean,
+    val personId: String? = null,
 )
 
 /**
@@ -46,10 +47,11 @@ class CaptureStore(private val root: File) {
     }
 
     @Synchronized
-    fun finish(id: String, startedAt: Instant, endedAt: Instant) {
+    fun finish(id: String, startedAt: Instant, endedAt: Instant, personId: String? = null) {
         val meta = JSONObject()
             .put("started_at", utc(startedAt))
             .put("ended_at", utc(endedAt))
+        if (personId != null && SAFE_ID.matches(personId)) meta.put("person_id", personId)
         val temp = File(dir(id), "$META.tmp")
         temp.writeText(meta.toString())
         check(temp.renameTo(File(dir(id), META))) { "Could not save capture" }
@@ -123,6 +125,7 @@ class CaptureStore(private val root: File) {
                 endedAt = meta.getString("ended_at"),
                 photos = countPhotos(folder),
                 hasAudio = File(folder, AUDIO).length() > 0,
+                personId = meta.optString("person_id").takeIf { SAFE_ID.matches(it) },
             )
         } catch (_: JSONException) {
             null
