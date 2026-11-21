@@ -261,6 +261,39 @@ class GlassesCoreTest {
     }
 
     @Test
+    fun firstScreenShowsOnlyTheGlanceAndScrollOpensTheCard() {
+        val body = MATCH_JSON.replace(
+            "\"spoken_items\"",
+            "\"glance\":{\"name\":\"Jordan Lee\",\"line\":\"Send the contact\"},\"spoken_items\"",
+        )
+        val rig = Rig(result = parseRecognize(body))
+        rig.scan()
+        assertEquals("Jordan Lee", rig.ui.last.title)
+        assertEquals("Send the contact", rig.ui.last.body)
+
+        rig.controller.onInput(InputAction.Scroll(-1))
+        assertEquals("Send the contact", rig.ui.last.body)
+
+        rig.controller.onInput(InputAction.Scroll(1))
+        assertTrue(rig.ui.last.body.contains("Talk about: Gripper"))
+        assertEquals(0, rig.ui.scrolled)
+
+        rig.controller.onInput(InputAction.Scroll(1))
+        assertEquals(1, rig.ui.scrolled)
+    }
+
+    @Test
+    fun blankGlanceFallsBackToTheFullCard() {
+        val body = MATCH_JSON.replace(
+            "\"spoken_items\"",
+            "\"glance\":{\"name\":\"Jordan Lee\",\"line\":\"\"},\"spoken_items\"",
+        )
+        val rig = Rig(result = parseRecognize(body))
+        rig.scan()
+        assertTrue(rig.ui.last.body.contains("Talk about: Gripper"))
+    }
+
+    @Test
     fun lateScanResultIsIgnoredAfterSwitchingModes() {
         val deferred = ArrayDeque<Runnable>()
         val rig = Rig(result = parseRecognize(MATCH_JSON), worker = Executor { deferred.add(it) })

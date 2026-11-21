@@ -105,12 +105,17 @@ data class CaptureList(val captures: List<CaptureSummary> = emptyList())
 @Serializable
 data class DisplayItem(val label: String, val text: String)
 
+/** The glasses' first screen: who this is and the one most useful thing to say. */
+@Serializable
+data class Glance(val name: String, val line: String)
+
 @Serializable
 data class ProfileCard(
     val name: String,
     val headline: String,
     @SerialName("display_items") val displayItems: List<DisplayItem>,
     @SerialName("spoken_items") val spokenItems: List<String>,
+    val glance: Glance? = null,
 )
 
 @Serializable

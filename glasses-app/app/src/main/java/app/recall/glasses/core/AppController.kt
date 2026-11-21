@@ -51,7 +51,11 @@ class AppController(
     private sealed interface ScanPhase {
         data object Ready : ScanPhase
         data object Working : ScanPhase
-        data class ShowCard(val card: Card, val cursor: SpokenCursor) : ScanPhase
+        data class ShowCard(
+            val card: Card,
+            val cursor: SpokenCursor,
+            val expanded: Boolean = false,
+        ) : ScanPhase
         data class Message(val text: String) : ScanPhase
     }
 
@@ -125,6 +129,13 @@ class AppController(
     private fun scrollCard(delta: Int) {
         val shown = scan as? ScanPhase.ShowCard ?: return
         if (!voiceActive) {
+            if (shown.card.glance != null && !shown.expanded) {
+                if (delta > 0) {
+                    scan = shown.copy(expanded = true)
+                    render()
+                }
+                return
+            }
             ui.scrollBody(delta)
             return
         }
@@ -382,6 +393,12 @@ class AppController(
                 status = "${phase.cursor.index + 1}/${phase.cursor.items.size}",
                 body = phase.cursor.current()?.second.orEmpty(),
                 hint = "Scroll: next  Click: repeat",
+            )
+        } else if (phase.card.glance != null && !phase.expanded) {
+            Screen(
+                title = phase.card.glance.name,
+                body = phase.card.glance.line,
+                hint = "Scroll: more  Click: scan",
             )
         } else {
             Screen(

@@ -6,6 +6,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
+private const val MAX_GLANCE_CHARS = 60
 
 fun parseInstant(value: String?): Instant? =
     value?.let { runCatching { Instant.parse(it) }.getOrNull() }
@@ -33,10 +34,35 @@ fun buildCard(profile: Profile, zone: ZoneId = ZoneId.systemDefault()): ProfileC
     // Avoid items come last: the glasses only read them when the user scrolls to them.
     val spoken = profile.spoken.ifEmpty { listOf(profile.name) } +
         profile.avoid.map { "Avoid: $it" }
-    return ProfileCard(profile.name, profile.headline, items, spoken)
+    return ProfileCard(
+        name = profile.name,
+        headline = profile.headline,
+        displayItems = items,
+        spokenItems = spoken,
+        glance = Glance(profile.name, glanceLine(profile)),
+    )
 }
+
+/** A promise the wearer owes comes first, then a topic. An avoid item is never shown here. */
+fun glanceLine(profile: Profile): String {
+    val candidates = profile.followUps + profile.topics
+    val line = candidates
+        .map { it.trim() }
+        .firstOrNull { it.isNotEmpty() && !mentionsAvoid(it, profile.avoid) }
+        ?: profile.headline.trim()
+    return line.take(MAX_GLANCE_CHARS)
+}
+
+private fun mentionsAvoid(text: String, avoid: List<String>): Boolean =
+    avoid.map { it.trim() }.any {
+        it.isNotEmpty() && (text.contains(it, ignoreCase = true) || it.contains(text, ignoreCase = true))
+    }
 
 fun confirmCard(card: ProfileCard): ProfileCard {
     val question = "Is this ${card.name}?"
-    return card.copy(headline = question, spokenItems = listOf(question) + card.spokenItems)
+    return card.copy(
+        headline = question,
+        spokenItems = listOf(question) + card.spokenItems,
+        glance = Glance(card.name, question),
+    )
 }

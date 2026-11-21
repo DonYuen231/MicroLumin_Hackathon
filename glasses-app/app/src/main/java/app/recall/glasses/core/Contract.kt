@@ -20,11 +20,15 @@ sealed interface InputAction {
 
 data class DisplayItem(val label: String, val text: String)
 
+/** The first screen of a card: the name and the one most useful thing to say. */
+data class Glance(val name: String, val line: String)
+
 data class Card(
     val name: String,
     val headline: String,
     val displayItems: List<DisplayItem>,
     val spokenItems: List<String>,
+    val glance: Glance? = null,
 ) {
     fun displayText(): String = buildString {
         append(name)
@@ -78,6 +82,10 @@ private fun parseCard(json: JSONObject): Card {
             }
         },
         spokenItems = (0 until (spoken?.length() ?: 0)).map { spoken!!.optString(it) },
+        glance = json.optJSONObject("glance")?.let {
+            Glance(it.optString("name"), it.optString("line"))
+                .takeIf { glance -> glance.name.isNotBlank() && glance.line.isNotBlank() }
+        },
     )
 }
 
