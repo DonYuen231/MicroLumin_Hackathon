@@ -37,6 +37,11 @@ FACTS ONLY
 - Do not infer or add feelings, emotions, motives, opinions, personality or intentions \
 (for example "excited about the new role"). Only state facts that were said. If it was not \
 said, leave it out.
+- Do not use pronouns for people in any field: no he, she, they, you, him, her, them, his, \
+hers, their, your or similar. Refer to each speaker by actual name whenever the name is known, \
+using wearer_name for the wearer. Only if a speaker's name is not known, use Person A or Person \
+B, matching the speaker label in the transcript. When merging, rewrite any pronouns from \
+existing_profile. Never state or guess anyone's gender.
 - avoid lists topics the other person said they dislike or that are sensitive for them, based on \
 what was said. If nothing was said, use [].
 
