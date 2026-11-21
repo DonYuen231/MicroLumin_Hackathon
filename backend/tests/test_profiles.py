@@ -12,6 +12,18 @@ from tests.test_auth_errors import assert_problem
 MET_AT = {"time": "2026-11-21T15:30:00Z", "place": "Worn Hackathon"}
 
 
+def follow_up(**over):
+    base = {
+        "text": "Send the RAG article",
+        "reason": "Don promised it during the conversation",
+        "due_in_hours": 6,
+        "channel": "message",
+        "draft": "Hi Sam, here is the RAG article I mentioned: [add link]",
+    }
+    base.update(over)
+    return base
+
+
 def llm_profile(**over):
     base = {
         "name": "Sam Rivera",
@@ -19,7 +31,7 @@ def llm_profile(**over):
         "summary": "Works on vision models. Builds a robot arm at home.",
         "encounters": [{"time": "x", "place": "y", "notes": "Talked about RAG and robotics."}],
         "topics": ["robotics side project", "RAG evaluation"],
-        "follow_ups": ["Send the RAG article"],
+        "follow_ups": [follow_up()],
         "avoid": ["Her last company's layoffs"],
         "since_you_met": ["MODEL MADE THIS UP"],
         "shared_links": ["https://evil.example"],
@@ -211,7 +223,27 @@ LONG = "x" * 61
 VIOLATIONS = {
     "long_topic": ({"topics": [LONG]}, "61 characters"),
     "long_headline": ({"headline": LONG}, "headline"),
-    "long_follow_up": ({"follow_ups": [LONG]}, "follow_ups"),
+    "long_follow_up": ({"follow_ups": [follow_up(text=LONG)]}, "follow_ups"),
+    "plain_string_follow_up": ({"follow_ups": ["Send it"]}, "follow_ups"),
+    "missing_due": (
+        {"follow_ups": [{k: v for k, v in follow_up().items() if k != "due_in_hours"}]},
+        "due_in_hours",
+    ),
+    "due_zero": ({"follow_ups": [follow_up(due_in_hours=0)]}, "due_in_hours"),
+    "due_too_far": ({"follow_ups": [follow_up(due_in_hours=721)]}, "due_in_hours"),
+    "bad_channel": ({"follow_ups": [follow_up(channel="carrier pigeon")]}, "channel"),
+    "none_with_draft": ({"follow_ups": [follow_up(channel="none")]}, "draft must be empty"),
+    "message_without_draft": ({"follow_ups": [follow_up(draft=" ")]}, "draft is required"),
+    "long_draft": ({"follow_ups": [follow_up(draft="x" * 301)]}, "draft is over 300"),
+    "long_reason": ({"follow_ups": [follow_up(reason="x" * 121)]}, "reason is over 120"),
+    "link_in_draft": (
+        {"follow_ups": [follow_up(draft="Read https://evil.example now")]},
+        "must not contain a link",
+    ),
+    "avoid_in_draft": (
+        {"follow_ups": [follow_up(draft="Sorry about her last company's layoffs.")]},
+        "must not mention anything from avoid",
+    ),
     "long_avoid": ({"avoid": [LONG]}, "avoid"),
     "long_spoken": ({"spoken": ["Sam Rivera " + LONG]}, "spoken"),
     "five_spoken": ({"spoken": ["Sam Rivera.", "a", "b", "c", "d"]}, "5 items"),
@@ -282,6 +314,58 @@ def test_check_rules_unit():
     assert check_rules(ok) == []
     bad = LLMProfile.model_validate(llm_profile(spoken=["nope"], topics=[LONG]))
     assert len(check_rules(bad)) == 2
+
+
+# ---- follow-ups ---------------------------------------------------------------------------
+
+
+def test_follow_up_fields_are_returned(client, upstream):
+    upstream.reply(reply())
+    assert build(client).json()["follow_ups"] == [
+        {
+            "text": "Send the RAG article",
+            "reason": "Don promised it during the conversation",
+            "due_in_hours": 6,
+            "channel": "message",
+            "draft": "Hi Sam, here is the RAG article I mentioned: [add link]",
+        }
+    ]
+
+
+def test_empty_follow_ups_are_allowed(client, upstream):
+    upstream.reply(reply(follow_ups=[]))
+    resp = build(client)
+    assert resp.status_code == 200
+    assert resp.json()["follow_ups"] == []
+
+
+def test_reminder_without_a_message_is_allowed(client, upstream):
+    item = follow_up(text="Check on the demo", channel="none", draft="", due_in_hours=168)
+    upstream.reply(reply(follow_ups=[item]))
+    assert build(client).json()["follow_ups"][0]["channel"] == "none"
+
+
+def test_existing_profile_with_plain_string_follow_ups_still_loads(client, upstream):
+    upstream.reply(reply())
+    old = {**EXISTING, "follow_ups": ["Send the old article", "  "]}
+    assert build(client, existing_profile=old).status_code == 200
+    user = upstream.json(0)["messages"][1]["content"]
+    assert "Send the old article" in user
+
+
+def test_existing_structured_follow_ups_round_trip(client, upstream):
+    upstream.reply(reply())
+    once = build(client).json()
+    upstream.reply(reply())
+    assert build(client, existing_profile=once).status_code == 200
+    assert "here is the RAG article" in upstream.json(1)["messages"][1]["content"]
+
+
+def test_prompt_covers_follow_up_decisions():
+    s = SYSTEM.lower()
+    assert "due_in_hours" in s and "first person" in s
+    assert "nothing is worth following up" in s
+    assert "recording started" in s
 
 
 def test_upstream_failure_is_problem(make_client, upstream):

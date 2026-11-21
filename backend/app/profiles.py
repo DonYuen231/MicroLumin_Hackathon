@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.errors import ProblemError
 from app.llm import ChatClient, ModelOutputError, extract_json
-from app.profiles_schema import BuildRequest, Encounter, LLMProfile, Profile
+from app.profiles_schema import BuildRequest, Encounter, FollowUp, LLMProfile, Profile
 from app.prompts import SYSTEM, build_user_message, retry_message
 
 log = logging.getLogger("recall")
@@ -19,6 +19,9 @@ log = logging.getLogger("recall")
 MAX_ITEM_CHARS = 60
 MAX_SPOKEN_ITEMS = 4
 MAX_NOTES_CHARS = 300
+MAX_REASON_CHARS = 120
+MAX_DRAFT_CHARS = 300
+LINK = re.compile(r"https?://|www\.", re.IGNORECASE)
 
 
 def _norm(text: str) -> str:
@@ -31,7 +34,7 @@ def check_rules(p: LLMProfile) -> list[str]:
     fields: dict[str, list[str]] = {
         "headline": [p.headline],
         "topics": p.topics,
-        "follow_ups": p.follow_ups,
+        "follow_ups": [f.text for f in p.follow_ups],
         "avoid": p.avoid,
         "spoken": p.spoken,
     }
@@ -59,6 +62,28 @@ def check_rules(p: LLMProfile) -> list[str]:
         overlaps = n and any(a in n or (len(n) >= 12 and n in a) for a in avoid_norm)
         if re.match(r"\s*avoid\b", item, re.IGNORECASE) or overlaps:
             errors.append(f'spoken must not include anything from avoid: "{item}"')
+    for follow_up in p.follow_ups:
+        errors.extend(_follow_up_errors(follow_up, avoid_norm))
+    return errors
+
+
+def _follow_up_errors(f: Any, avoid_norm: list[str]) -> list[str]:
+    """A draft is text the wearer may send, so it is held to stricter rules than other fields."""
+    errors: list[str] = []
+    label = f'follow_ups item "{f.text}"'
+    if len(f.reason) > MAX_REASON_CHARS:
+        errors.append(f"{label}: reason is over {MAX_REASON_CHARS} characters.")
+    if len(f.draft) > MAX_DRAFT_CHARS:
+        errors.append(f"{label}: draft is over {MAX_DRAFT_CHARS} characters.")
+    if f.channel == "none" and f.draft.strip():
+        errors.append(f'{label}: draft must be empty when channel is "none".')
+    if f.channel != "none" and not f.draft.strip():
+        errors.append(f"{label}: draft is required when channel is {f.channel}.")
+    if LINK.search(f.draft):
+        errors.append(f'{label}: draft must not contain a link. Write "[add link]" instead.')
+    draft_norm = _norm(f.draft)
+    if any(a in draft_norm for a in avoid_norm):
+        errors.append(f"{label}: draft must not mention anything from avoid.")
     return errors
 
 
@@ -94,7 +119,7 @@ def assemble(llm: LLMProfile, req: BuildRequest) -> Profile:
         summary=llm.summary,
         encounters=encounters,
         topics=llm.topics,
-        follow_ups=llm.follow_ups,
+        follow_ups=[FollowUp.model_validate(f.model_dump()) for f in llm.follow_ups],
         avoid=llm.avoid,
         # since_you_met belongs to refresh only: whatever the model said is discarded.
         since_you_met=list(existing.since_you_met) if existing else [],
