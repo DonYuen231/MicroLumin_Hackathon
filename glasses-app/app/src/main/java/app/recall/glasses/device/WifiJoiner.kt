@@ -29,6 +29,17 @@ class WifiJoiner(context: Context) {
         wifi.reconnect()
     }
 
+    /** Android can report a dead hotspot link as connected, so this drops it and joins again. */
+    fun reconnectToHotspot() {
+        val ssid = prefs.getString(KEY_SSID, null) ?: return
+        val id = wifi.configuredNetworks.orEmpty()
+            .firstOrNull { it.SSID == "\"$ssid\"" }?.networkId ?: return
+        Log.i(TAG, "The phone stopped answering, so reconnecting to the hotspot")
+        wifi.disconnect()
+        wifi.enableNetwork(id, true)
+        wifi.reconnect()
+    }
+
     fun join(ssid: String, password: String): Boolean {
         if (ssid.isEmpty() || password.length !in 8..63 || '"' in ssid || '"' in password) {
             Log.w(TAG, "Wi-Fi setup needs a name and an 8 to 63 character WPA2 password")

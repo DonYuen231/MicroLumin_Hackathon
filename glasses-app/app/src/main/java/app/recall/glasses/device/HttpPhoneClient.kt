@@ -7,10 +7,13 @@ import app.recall.glasses.core.REASON_PHONE_UNREACHABLE
 import app.recall.glasses.core.RecognizeResult
 import app.recall.glasses.core.parseRecognize
 import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.UUID
+
+enum class PhoneLink { OK, NOT_READY, DEAD }
 
 /** Calls the phone. [host] is `ip` or `ip:port`, or null when there is no Wi-Fi. */
 class HttpPhoneClient(private val host: () -> String?) : PhoneApi {
@@ -85,18 +88,22 @@ class HttpPhoneClient(private val host: () -> String?) : PhoneApi {
         }
     }
 
-    /** A quick check for the Home screen. A phone that has not trusted the glasses is false. */
-    fun isReachable(): Boolean {
-        val base = baseUrl() ?: return false
+    /** [PhoneLink.NOT_READY] means Wi-Fi works, but the phone app is closed or untrusting. */
+    fun checkLink(): PhoneLink {
+        val base = baseUrl() ?: return PhoneLink.DEAD
         return try {
             val connection = open("$base/health", LINK_TIMEOUT_MS)
             try {
-                connection.responseCode == 200
+                if (connection.responseCode == 200) PhoneLink.OK else PhoneLink.NOT_READY
             } finally {
                 connection.disconnect()
             }
+        } catch (e: ConnectException) {
+            val refused = generateSequence<Throwable>(e) { it.cause }
+                .any { it.message.orEmpty().contains("ECONNREFUSED") }
+            if (refused) PhoneLink.NOT_READY else PhoneLink.DEAD
         } catch (_: IOException) {
-            false
+            PhoneLink.DEAD
         }
     }
 

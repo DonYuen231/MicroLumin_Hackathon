@@ -32,6 +32,7 @@ import android.widget.TextView
 import app.recall.glasses.core.AppController
 import app.recall.glasses.core.CaptureServer
 import app.recall.glasses.core.CaptureStore
+import app.recall.glasses.core.LinkWatchdog
 import app.recall.glasses.core.Screen
 import app.recall.glasses.core.Ui
 import app.recall.glasses.core.VoiceConfig
@@ -47,6 +48,7 @@ import app.recall.glasses.device.FallbackCameraSource
 import app.recall.glasses.device.GLASS_GREEN
 import app.recall.glasses.device.HttpPhoneClient
 import app.recall.glasses.device.InputMapper
+import app.recall.glasses.device.PhoneLink
 import app.recall.glasses.device.RecorderAudioSource
 import app.recall.glasses.device.ToneCues
 import app.recall.glasses.device.VoskMic
@@ -81,6 +83,7 @@ class MainActivity : Activity(), Ui {
     private var phoneOverride: String? = null
     private var wasRecording = false
     private val wifiJoiner by lazy { WifiJoiner(this) }
+    private val linkWatchdog = LinkWatchdog()
     private var lastScreen: Screen? = null
     private var onScreen = false
     private var touches = 0
@@ -184,8 +187,11 @@ class MainActivity : Activity(), Ui {
         linkTask = linkChecks.scheduleWithFixedDelay(
             {
                 runCatching { wifiJoiner.ensureOnHotspot() }
-                val linked = runCatching { phoneClient.isReachable() }.getOrDefault(false)
-                mainHandler.post { controller.onPhoneLink(linked) }
+                val link = runCatching { phoneClient.checkLink() }.getOrDefault(PhoneLink.DEAD)
+                if (linkWatchdog.onCheck(link != PhoneLink.DEAD)) {
+                    runCatching { wifiJoiner.reconnectToHotspot() }
+                }
+                mainHandler.post { controller.onPhoneLink(link == PhoneLink.OK) }
             },
             0,
             LINK_CHECK_S,
