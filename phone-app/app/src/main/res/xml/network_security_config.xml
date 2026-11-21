@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The hotspot subnet changes, and this file cannot match IP ranges. GlassesClient only accepts
+     private IP addresses, and BackendClient refuses plain HTTP except to this device. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
