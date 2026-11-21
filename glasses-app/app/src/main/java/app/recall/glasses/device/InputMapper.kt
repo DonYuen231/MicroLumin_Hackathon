@@ -12,9 +12,25 @@ import app.recall.glasses.core.InputAction
 class InputMapper(private val emit: (InputAction) -> Unit) {
     private val gestures = GestureTracker()
     private val debouncer = ClickDebouncer()
+    private var lastSwipeMs = -SWIPE_BACK_WINDOW_MS
 
     fun onKey(event: KeyEvent): Boolean {
-        val action = keyAction(event.keyCode) ?: return false
+        // The M6 touchpad sends F11 or F12 for a swipe, sometimes followed by Back.
+        if (event.keyCode == KeyEvent.KEYCODE_F11 || event.keyCode == KeyEvent.KEYCODE_F12) {
+            lastSwipeMs = event.eventTime
+        }
+        if (event.keyCode == KeyEvent.KEYCODE_BACK &&
+            event.eventTime - lastSwipeMs < SWIPE_BACK_WINDOW_MS
+        ) {
+            return true
+        }
+        val action = keyAction(event.keyCode)
+        if (action == null) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                Log.d(TAG, "unmapped key ${KeyEvent.keyCodeToString(event.keyCode)}")
+            }
+            return false
+        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             Log.d(TAG, "key ${KeyEvent.keyCodeToString(event.keyCode)} source=${event.source}")
             if (event.repeatCount == 0 || action is InputAction.Scroll) send(action, event.eventTime)
@@ -68,7 +84,10 @@ class InputMapper(private val emit: (InputAction) -> Unit) {
             MotionEvent.ACTION_DOWN -> gestures.down(event.x, event.y, event.eventTime)
             MotionEvent.ACTION_MOVE -> gestures.move(event.x, event.y)
             MotionEvent.ACTION_UP ->
-                gestures.up(event.x, event.y, event.eventTime)?.let { send(it, event.eventTime) }
+                gestures.up(event.x, event.y, event.eventTime)?.let {
+                    Log.d(TAG, "gesture $it")
+                    send(it, event.eventTime)
+                }
             MotionEvent.ACTION_CANCEL -> gestures.cancel()
         }
     }
@@ -78,10 +97,10 @@ class InputMapper(private val emit: (InputAction) -> Unit) {
     }
 
     private fun keyAction(code: Int): InputAction? = when (code) {
-        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP ->
-            InputAction.Scroll(-1)
-        KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN ->
-            InputAction.Scroll(1)
+        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP,
+        KeyEvent.KEYCODE_F11 -> InputAction.Scroll(-1)
+        KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN,
+        KeyEvent.KEYCODE_F12 -> InputAction.Scroll(1)
         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
         KeyEvent.KEYCODE_BUTTON_A -> InputAction.Primary
         KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_BUTTON_B,
@@ -91,5 +110,6 @@ class InputMapper(private val emit: (InputAction) -> Unit) {
 
     private companion object {
         const val TAG = "RecallInput"
+        const val SWIPE_BACK_WINDOW_MS = 500L
     }
 }

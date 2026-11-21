@@ -4,7 +4,8 @@ import kotlin.math.abs
 
 /** Turns one finger's down, move, and up into a tap, long press, or swipe. */
 class GestureTracker(
-    private val swipePx: Float = 40f,
+    // The touchpad is scaled up to the display, so a still finger can jump about 40 px.
+    private val swipePx: Float = 80f,
     private val longPressMs: Long = 600,
 ) {
     private var active = false

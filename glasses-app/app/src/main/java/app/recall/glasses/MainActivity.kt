@@ -7,10 +7,15 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -45,11 +50,15 @@ import app.recall.glasses.device.InputMapper
 import app.recall.glasses.device.RecorderAudioSource
 import app.recall.glasses.device.ToneCues
 import app.recall.glasses.device.VoskMic
+import app.recall.glasses.device.WifiJoiner
 import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import org.json.JSONObject
 
 class MainActivity : Activity(), Ui {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -65,8 +74,22 @@ class MainActivity : Activity(), Ui {
     private lateinit var mouse: BluetoothMouse
     private lateinit var voiceMic: VoskMic
     private lateinit var announcer: ClipAnnouncer
+    private lateinit var phoneClient: HttpPhoneClient
+    private val linkChecks = Executors.newSingleThreadScheduledExecutor()
+    private var linkTask: ScheduledFuture<*>? = null
     private var server: CaptureServer? = null
     private var phoneOverride: String? = null
+    private var wasRecording = false
+    private val wifiJoiner by lazy { WifiJoiner(this) }
+    private var lastScreen: Screen? = null
+    private var onScreen = false
+    private var touches = 0
+    private var inputs = 0
+    private var lastInput = ""
+    private var lastKey = ""
+
+    @Volatile
+    private var statusJson = "{}"
 
     private val tick = object : Runnable {
         override fun run() {
@@ -76,6 +99,16 @@ class MainActivity : Activity(), Ui {
     }
 
     private val dimScreen = Runnable { setBrightness(DIM_BRIGHTNESS) }
+
+    private val wearListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val worn = event.values[0] != 0f
+            Log.i("RecallWear", "worn=$worn")
+            controller.onWornChanged(worn)
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,11 +130,12 @@ class MainActivity : Activity(), Ui {
             main = mainHandler,
         ) { if (::controller.isInitialized) controller.onVoiceReady() }
         announcer = ClipAnnouncer(this, mainHandler)
+        phoneClient = HttpPhoneClient(::phoneHost)
         controller = AppController(
             camera = FallbackCameraSource(Camera2Source(this), Camera1Source()),
             audio = RecorderAudioSource(),
             store = store,
-            phone = HttpPhoneClient(::phoneHost),
+            phone = phoneClient,
             speaker = speaker,
             cues = ToneCues(),
             pairing = mouse,
@@ -110,7 +144,6 @@ class MainActivity : Activity(), Ui {
             main = { mainHandler.post(it) },
             glassesIp = ::glassesIp,
             initialVoice = prefs.getBoolean(PREF_VOICE, false),
-            saveVoice = { prefs.edit().putBoolean(PREF_VOICE, it).apply() },
             mic = voiceMic,
             announcer = announcer,
             voiceConfig = voiceConfig,
@@ -118,6 +151,9 @@ class MainActivity : Activity(), Ui {
         voiceMic.load()
         input = InputMapper { action ->
             wake()
+            inputs++
+            lastInput = action.toString()
+            publishStatus()
             controller.onInput(action)
         }
 
@@ -138,7 +174,23 @@ class MainActivity : Activity(), Ui {
         super.onStart()
         mainHandler.post(tick)
         wake()
+        onScreen = true
         controller.onForeground()
+        publishStatus()
+        val sensors = getSystemService(SensorManager::class.java)
+        val wear = sensors.getDefaultSensor(Sensor.TYPE_LOW_LATENCY_OFFBODY_DETECT, true)
+            ?: sensors.getDefaultSensor(Sensor.TYPE_LOW_LATENCY_OFFBODY_DETECT)
+        wear?.let { sensors.registerListener(wearListener, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        linkTask = linkChecks.scheduleWithFixedDelay(
+            {
+                runCatching { wifiJoiner.ensureOnHotspot() }
+                val linked = runCatching { phoneClient.isReachable() }.getOrDefault(false)
+                mainHandler.post { controller.onPhoneLink(linked) }
+            },
+            0,
+            LINK_CHECK_S,
+            TimeUnit.SECONDS,
+        )
     }
 
     override fun onRequestPermissionsResult(
@@ -151,6 +203,10 @@ class MainActivity : Activity(), Ui {
     }
 
     override fun onStop() {
+        getSystemService(SensorManager::class.java).unregisterListener(wearListener)
+        onScreen = false
+        publishStatus()
+        linkTask?.cancel(false)
         mainHandler.removeCallbacks(tick)
         mainHandler.removeCallbacks(dimScreen)
         controller.onBackground()
@@ -161,6 +217,7 @@ class MainActivity : Activity(), Ui {
         server?.stop()
         speaker.shutdown()
         announcer.shutdown()
+        linkChecks.shutdownNow()
         // Queued after any recording still being saved, so its audio file is closed first.
         worker.execute { voiceMic.shutdown() }
         worker.shutdown()
@@ -183,20 +240,53 @@ class MainActivity : Activity(), Ui {
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        input.onKey(event) || super.dispatchKeyEvent(event)
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            lastKey = KeyEvent.keyCodeToString(event.keyCode)
+            publishStatus()
+        }
+        return input.onKey(event) || super.dispatchKeyEvent(event)
+    }
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean = input.onTouch(event)
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            touches++
+            publishStatus()
+        }
+        return input.onTouch(event)
+    }
+
+    /** What the phone sees at `/status`. It holds no conversation or card content. */
+    private fun publishStatus() {
+        statusJson = JSONObject()
+            .put("on_screen", onScreen)
+            .put("listening", voiceMic.listening)
+            .put("recording", lastScreen?.recording == true)
+            .put("status", lastScreen?.status.orEmpty())
+            .put("touches", touches)
+            .put("inputs", inputs)
+            .put("last_input", lastInput)
+            .put("last_key", lastKey)
+            .put("uptime_s", SystemClock.elapsedRealtime() / 1_000)
+            .toString()
+    }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
         input.onGenericMotion(event) || super.dispatchGenericMotionEvent(event)
 
     override fun render(screen: Screen) {
+        // A voice-started recording has no touch to wake the dimmed display.
+        if (screen.recording != wasRecording) {
+            wasRecording = screen.recording
+            wake()
+        }
         titleView.text = screen.title
         statusView.text = screen.status
         hintView.text = screen.hint
         cardView.show(screen.body)
         crosshair.visibility = if (screen.crosshair) View.VISIBLE else View.GONE
+        lastScreen = screen
+        publishStatus()
     }
 
     override fun scrollBody(delta: Int) = cardView.scrollLines(delta)
@@ -218,10 +308,18 @@ class MainActivity : Activity(), Ui {
             setPadding(PADDING, PADDING, PADDING, PADDING)
             addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(
+                divider(),
+                LinearLayout.LayoutParams(MATCH_PARENT, DIVIDER_PX).apply { topMargin = 8 },
+            )
+            addView(
                 cardView,
-                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 14 },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 18 },
             )
             addView(View(context), LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+            addView(
+                divider(),
+                LinearLayout.LayoutParams(MATCH_PARENT, DIVIDER_PX).apply { bottomMargin = 8 },
+            )
             addView(hintView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
         return FrameLayout(this).apply {
@@ -232,6 +330,8 @@ class MainActivity : Activity(), Ui {
             pointerIcon = PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL)
         }
     }
+
+    private fun divider() = View(this).apply { setBackgroundColor(Color.rgb(0, 110, 0)) }
 
     private fun label(size: Float, bold: Boolean = false) = TextView(this).apply {
         setTextColor(GLASS_GREEN)
@@ -245,6 +345,7 @@ class MainActivity : Activity(), Ui {
             store = store,
             isAllowed = ::isPhone,
             onChanged = { mainHandler.post { controller.refresh() } },
+            status = { statusJson },
         )
         try {
             next.startServer()
@@ -273,7 +374,26 @@ class MainActivity : Activity(), Ui {
     /** Test hooks for adb. Release builds ignore them, so no app can redirect face photos. */
     private fun readDebugExtras(intent: Intent) {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
-        if (debuggable) intent.getStringExtra(EXTRA_PHONE_HOST)?.let { phoneOverride = it }
+        if (!debuggable) return
+        intent.getStringExtra(EXTRA_PHONE_HOST)?.let { phoneOverride = it }
+        if (intent.getBooleanExtra(EXTRA_TEST_LINK, false) && ::phoneClient.isInitialized) {
+            intent.removeExtra(EXTRA_TEST_LINK)
+            linkChecks.execute { phoneClient.captureReady() }
+        }
+        val ssid = intent.getStringExtra(EXTRA_WIFI_SSID)
+        val password = intent.getStringExtra(EXTRA_WIFI_PASSWORD)
+        // Removed at once, so the password does not stay in the saved launch intent.
+        intent.removeExtra(EXTRA_WIFI_SSID)
+        intent.removeExtra(EXTRA_WIFI_PASSWORD)
+        if (ssid != null && password != null) {
+            wifiJoiner.join(ssid, password)
+            listOf(4_000L, 9_000L, 15_000L).forEach { delay ->
+                mainHandler.postDelayed(
+                    { if (::controller.isInitialized) controller.refresh() },
+                    delay,
+                )
+            }
+        }
     }
 
     private fun requestMissingPermissions() {
@@ -296,8 +416,13 @@ class MainActivity : Activity(), Ui {
         const val PREF_VOICE = "voice"
         const val EXTRA_PHONE_HOST = "phone_host"
         const val EXTRA_PAIR_MOUSE = "pair_mouse"
+        const val EXTRA_TEST_LINK = "test_link"
+        const val EXTRA_WIFI_SSID = "wifi_ssid"
+        const val EXTRA_WIFI_PASSWORD = "wifi_password"
         const val VOICE_MODEL = "vosk-model-small-en-us-0.15"
         const val PADDING = 24
+        const val DIVIDER_PX = 2
+        const val LINK_CHECK_S = 5L
         const val DIM_AFTER_MS = 45_000L
         const val DIM_BRIGHTNESS = 0.15f
         val PERMISSIONS = listOf(

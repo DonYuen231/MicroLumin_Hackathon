@@ -39,7 +39,6 @@ class AppController(
     private val glassesIp: () -> String = { "" },
     private val now: () -> Instant = Instant::now,
     initialVoice: Boolean = false,
-    private val saveVoice: (Boolean) -> Unit = {},
     private val mic: VoiceMic = NoVoiceMic,
     private val announcer: Announcer = NoAnnouncer,
     private val voiceConfig: VoiceConfig = VoiceConfig(),
@@ -63,8 +62,9 @@ class AppController(
     }
 
     private var mode = Mode.HOME
-    private var voice = initialVoice
-    private var menuIndex = 0
+    private val voice = initialVoice
+    private var phoneLinked: Boolean? = null
+    private var homeNote = ""
     private var pairingState: PairingState? = null
     private var pairingIndex = 0
     private var capture: CapturePhase = CapturePhase.Idle
@@ -74,7 +74,14 @@ class AppController(
     private var scanGeneration = 0
 
     /** Set while the current capture was started by a greeting rather than a click. */
-    private class HandsFree {
+    private class HandsFree(val startedMs: Long, val tapped: Boolean) {
+        @Volatile
+        var timedOut = false
+        var needsFace = false
+        var faceFound = false
+        var faceBusy = false
+        var faceTries = 0
+        var nextFaceMs = 0L
         var card: Card? = null
         var personId: String? = null
         var expanded = false
@@ -82,6 +89,7 @@ class AppController(
 
     private var handsFree: HandsFree? = null
     private var foreground = false
+    private var worn = true
     private val session = EventSession(voiceConfig)
     private val micEvents = object : VoiceEvents {
         override fun onPhrase(text: String) = onHeard(text)
@@ -107,11 +115,49 @@ class AppController(
         render()
     }
 
+    /** The result of the regular check that the phone can be reached. */
+    fun onPhoneLink(linked: Boolean) {
+        if (phoneLinked == linked) return
+        phoneLinked = linked
+        render()
+    }
+
+    /** Glasses that are off the face must not listen, and a hands-free recording ends. */
+    fun onWornChanged(isWorn: Boolean) {
+        if (worn == isWorn) return
+        worn = isWorn
+        if (!isWorn && handsFree != null) {
+            when (capture) {
+                is CapturePhase.Recording -> stopCapture()
+                CapturePhase.Starting -> stopWhenStarted = true
+                else -> Unit
+            }
+        }
+        syncListening()
+        render()
+    }
+
     /** Called once a second. */
     fun onTick() {
+        handsFree?.let { active ->
+            val waited = nowMs() - active.startedMs
+            if (capture == CapturePhase.Starting && !active.tapped && !active.timedOut &&
+                waited >= voiceConfig.confirmTimeoutMs
+            ) {
+                // No face confirmed in time, so stop saving now rather than when the check ends.
+                active.timedOut = true
+                runCatching { mic.stopFile() }
+            }
+            retryFace(active)
+        }
         if (session.onTick(nowMs()) == EventStep.Stop) {
             mic.clearHeard()
             stopCapture()
+        }
+        // Another app may have taken the mic for a moment, so listening recovers by itself.
+        if (foreground && worn && capture == CapturePhase.Idle && mic.ready && !mic.listening) {
+            syncListening()
+            render()
         }
         if (isRecording) render()
     }
@@ -121,7 +167,7 @@ class AppController(
     /** A click recording uses MediaRecorder, which needs the mic to itself. */
     private fun syncListening() {
         val clickCapture = capture != CapturePhase.Idle && handsFree == null
-        if (handsFree != null || (foreground && !clickCapture && mic.ready)) {
+        if (handsFree != null || (foreground && worn && !clickCapture && mic.ready)) {
             mic.startListening(micEvents)
         } else {
             mic.stopListening()
@@ -149,15 +195,18 @@ class AppController(
      * Audio starts at once, because the first words are usually the person's name. If the camera
      * finds no face, that audio is deleted and the app goes back to listening.
      */
-    private fun startHandsFree() {
-        val active = HandsFree()
+    private fun startHandsFree(tapped: Boolean = false) {
+        val active = HandsFree(nowMs(), tapped)
         val startedAt = now()
         handsFree = active
+        homeNote = ""
         capture = CapturePhase.Starting
         stopWhenStarted = false
         scanGeneration++
         speaker.stop()
         cues.recordStart()
+        if (tapped) announcer.started()
+        syncListening()
         render()
         worker.execute {
             var id: String? = null
@@ -166,13 +215,13 @@ class AppController(
                 val newId = store.newCapture(startedAt).also { id = it }
                 mic.startFile(store.audioFile(newId))
                 val photos = camera.takeStills(voiceConfig.photos)
-                val checked = phone.recognize(photos.first())
-                if (keepsRecording(checked)) store.savePhotos(newId, photos)
+                val checked = recognizeAny(photos)
+                if (keepsRecording(checked, active.tapped)) store.savePhotos(newId, photos)
                 result = checked
             } catch (e: Exception) {
                 result = null
             }
-            val kept = result?.let(::keepsRecording) == true
+            val kept = result?.let { keepsRecording(it, active.tapped) } == true
             if (!kept) {
                 runCatching { mic.stopFile() }
                 id?.let { runCatching { store.discard(it) } }
@@ -180,19 +229,31 @@ class AppController(
             val finalId = id
             val finalResult = result
             main.execute {
-                if (kept && finalId != null && finalResult != null) {
+                if (kept && !active.timedOut && finalId != null && finalResult != null) {
                     onHandsFreeRecording(active, finalId, startedAt, finalResult)
                 } else {
-                    onHandsFreeCancelled()
+                    if (kept) {
+                        worker.execute {
+                            runCatching { mic.stopFile() }
+                            finalId?.let { runCatching { store.discard(it) } }
+                        }
+                    }
+                    onHandsFreeCancelled(active)
                 }
             }
         }
     }
 
-    /** Without a confirmed face in front of the wearer, this may be someone else's conversation. */
-    private fun keepsRecording(result: RecognizeResult): Boolean =
-        result is RecognizeResult.Match ||
-            (result as? RecognizeResult.Failure)?.reason == "no_match"
+    /**
+     * A tap is the wearer's own decision to record. A voice trigger may be someone else's
+     * conversation, so it needs a confirmed face in front of the wearer.
+     */
+    private fun keepsRecording(result: RecognizeResult, tapped: Boolean): Boolean = tapped ||
+        when (result) {
+            // The phone's stage backup card has score 0, because no face was actually checked.
+            is RecognizeResult.Match -> result.score > 0
+            is RecognizeResult.Failure -> result.reason == "no_match"
+        }
 
     private fun onHandsFreeRecording(
         active: HandsFree,
@@ -207,17 +268,80 @@ class AppController(
             active.personId = result.capturePersonId
             cues.match()
         }
-        announcer.started()
+        if (active.tapped && !hasConfirmedFace(result)) {
+            active.needsFace = true
+            active.nextFaceMs = nowMs() + voiceConfig.faceRetryMs
+        } else {
+            active.faceFound = true
+        }
+        if (!active.tapped) announcer.started()
         render()
         if (stopWhenStarted) stopCapture()
     }
 
-    private fun onHandsFreeCancelled() {
+    private fun hasConfirmedFace(result: RecognizeResult): Boolean = when (result) {
+        is RecognizeResult.Match -> result.score > 0
+        is RecognizeResult.Failure -> result.reason == "no_match"
+    }
+
+    /** Tries the newest photo first, because the camera's exposure has settled by then. */
+    private fun recognizeAny(photos: List<ByteArray>): RecognizeResult {
+        var last: RecognizeResult = RecognizeResult.Failure("no_face")
+        for (photo in photos.asReversed()) {
+            last = phone.recognize(photo)
+            if (hasConfirmedFace(last)) return last
+            if (last is RecognizeResult.Failure && last.reason !in FACE_MISSES) return last
+        }
+        return last
+    }
+
+    /** The wearer may tap before facing the person, so keep looking while it records. */
+    private fun retryFace(active: HandsFree) {
+        val recording = capture as? CapturePhase.Recording ?: return
+        if (!active.needsFace || active.faceBusy || nowMs() < active.nextFaceMs) return
+        if (active.faceTries >= voiceConfig.faceRetries) {
+            active.needsFace = false
+            render()
+            return
+        }
+        active.faceBusy = true
+        active.faceTries++
+        worker.execute {
+            val checked = runCatching {
+                val photos = camera.takeStills(voiceConfig.photos)
+                recognizeAny(photos).also {
+                    if (hasConfirmedFace(it)) store.savePhotos(recording.id, photos)
+                }
+            }.getOrNull()
+            main.execute { onFaceRetried(active, checked) }
+        }
+    }
+
+    private fun onFaceRetried(active: HandsFree, result: RecognizeResult?) {
+        active.faceBusy = false
+        active.nextFaceMs = nowMs() + voiceConfig.faceRetryMs
+        if (handsFree !== active || result == null || !hasConfirmedFace(result)) return
+        active.needsFace = false
+        active.faceFound = true
+        if (result is RecognizeResult.Match) {
+            active.card = result.card
+            active.personId = result.capturePersonId
+        }
+        cues.match()
+        render()
+    }
+
+    private fun onHandsFreeCancelled(active: HandsFree) {
         capture = CapturePhase.Idle
         handsFree = null
         stopWhenStarted = false
         session.onNoFace(nowMs())
         cues.noMatch()
+        if (active.tapped) {
+            // "Recording started" was already said, so people must hear that it ended.
+            announcer.finished()
+            homeNote = messageFor(REASON_CAMERA_FAILED)
+        }
         syncListening()
         render()
     }
@@ -240,12 +364,17 @@ class AppController(
                 capture = CapturePhase.Idle
                 handsFree = null
                 captureNote = note
+                homeNote = if (note == "Saved" && !active.faceFound) "Saved, no face found" else note
+                // Back to the ready screen by itself, so the next person needs no reset.
+                mode = Mode.HOME
+                scan = ScanPhase.Ready
                 session.onFinished(nowMs())
                 cues.recordStop()
                 announcer.finished()
                 syncListening()
                 render()
             }
+            if (note != "Save failed") runCatching { phone.captureReady() }
         }
     }
 
@@ -305,10 +434,6 @@ class AppController(
                 pairingIndex = (pairingIndex + delta).coerceIn(0, last)
                 render()
             }
-            mode == Mode.HOME -> {
-                menuIndex = (menuIndex + delta).coerceIn(0, MENU_SIZE - 1)
-                render()
-            }
             mode == Mode.RECOGNIZE -> scrollCard(delta)
         }
     }
@@ -344,9 +469,10 @@ class AppController(
                 else -> Unit
             }
             pairingNow != null -> pairingNow.devices.getOrNull(pairingIndex)?.let { pairing.pair(it.address) }
-            mode == Mode.HOME -> activateMenu()
+            mode == Mode.HOME -> onHomeTap()
             mode == Mode.CAPTURE -> when (capture) {
-                CapturePhase.Idle -> startCapture()
+                // Same flow as Home, so a stray mode change cannot skip the face check.
+                CapturePhase.Idle -> if (mic.ready) onHomeTap() else startCapture()
                 is CapturePhase.Recording -> stopCapture()
                 else -> Unit
             }
@@ -354,14 +480,15 @@ class AppController(
         }
     }
 
-    private fun activateMenu() {
-        if (menuIndex == MENU_VOICE) {
-            voice = !voice
-            saveVoice(voice)
-            if (!voice) speaker.stop()
-            render()
-        } else {
-            openPairing()
+    /** One tap starts a recording from Home, and the next tap ends it. */
+    private fun onHomeTap() {
+        if (capture != CapturePhase.Idle) return
+        if (!mic.ready) {
+            mode = Mode.CAPTURE
+            startCapture()
+        } else if (session.onTapStart()) {
+            mic.clearHeard()
+            startHandsFree(tapped = true)
         }
     }
 
@@ -471,6 +598,7 @@ class AppController(
                 syncListening()
                 render()
             }
+            if (note != "Save failed") runCatching { phone.captureReady() }
         }
     }
 
@@ -524,8 +652,13 @@ class AppController(
             mode == Mode.CAPTURE -> captureScreen()
             else -> recognizeScreen()
         }
-        val showListening = screen.status.isEmpty() && mic.listening
-        ui.render(if (showListening) screen.copy(status = "Listening") else screen)
+        val status = when {
+            screen.status.isNotEmpty() -> screen.status
+            mic.listening -> "● Listening"
+            !worn && mic.ready -> "Not worn"
+            else -> ""
+        }
+        ui.render(screen.copy(status = status))
     }
 
     private fun handsFreeScreen(active: HandsFree): Screen {
@@ -539,44 +672,61 @@ class AppController(
         val seconds = Duration.between(phase.startedAt, now()).seconds.coerceAtLeast(0)
         val status = "REC %02d:%02d".format(seconds / 60, seconds % 60)
         val card = active.card
+        val endHint = "Tap or say \"${voiceConfig.endPrompt}\""
         return when {
+            card == null && active.needsFace -> Screen(
+                title = "Look at their face",
+                status = status,
+                hint = endHint,
+                crosshair = true,
+                recording = true,
+            )
             card == null -> Screen(
                 title = "New person",
                 status = status,
-                hint = "Click: stop",
+                body = "Recording this\nconversation",
+                hint = endHint,
                 recording = true,
             )
             card.glance != null && !active.expanded -> Screen(
                 title = card.glance.name,
                 status = status,
                 body = card.glance.line,
-                hint = "Scroll: more  Click: stop",
+                hint = endHint,
                 recording = true,
             )
             else -> Screen(
                 title = card.name,
                 status = status,
                 body = card.displayText(),
-                hint = "Scroll: read  Click: stop",
+                hint = endHint,
                 recording = true,
             )
         }
     }
 
     private fun homeScreen(): Screen {
-        val voiceLabel = when {
-            voice && !speaker.available -> "Voice: no engine"
-            voice -> "Voice: on"
-            else -> "Voice: off"
+        val message = when {
+            !mic.ready -> "Tap to record"
+            !worn -> "Put on the glasses\nor tap to record"
+            phoneLinked == false -> "Phone not connected\nTap still records"
+            else -> "Say\n\"${voiceConfig.startPrompt}\"\nor tap to record"
         }
-        val mouse = pairing.connectedName()?.let { "Mouse: $it" } ?: "Pair mouse"
-        val lines = listOf(voiceLabel, mouse).mapIndexed { index, text ->
-            (if (index == menuIndex) "> " else "  ") + text
-        } + "Saved: ${store.list().size}" + "IP: ${glassesIp().ifBlank { "no Wi-Fi" }}"
+        val waiting = store.list().size
+        val footer = buildList {
+            add(
+                when (phoneLinked) {
+                    true -> "Phone connected"
+                    false -> "IP: ${glassesIp().ifBlank { "no Wi-Fi" }}"
+                    null -> "Finding phone"
+                },
+            )
+            if (waiting > 0) add("$waiting to sync")
+        }
         return Screen(
             title = Mode.HOME.title,
-            body = lines.joinToString("\n"),
-            hint = "Click: select  Right: mode",
+            body = listOf(homeNote, message).filter { it.isNotEmpty() }.joinToString("\n"),
+            hint = footer.joinToString("   "),
         )
     }
 
@@ -597,7 +747,7 @@ class AppController(
         CapturePhase.Idle -> Screen(
             title = Mode.CAPTURE.title,
             body = captureNote,
-            hint = "Click: record  Right: mode",
+            hint = "Tap: record  Hold: mode",
             crosshair = captureNote.isEmpty(),
         )
         CapturePhase.Starting -> Screen(Mode.CAPTURE.title, body = "Taking photos", crosshair = true)
@@ -607,7 +757,7 @@ class AppController(
                 title = Mode.CAPTURE.title,
                 status = "REC %02d:%02d".format(seconds / 60, seconds % 60),
                 body = captureNote,
-                hint = "Click: stop",
+                hint = "Tap: stop",
                 recording = true,
             )
         }
@@ -617,41 +767,40 @@ class AppController(
     private fun recognizeScreen(): Screen = when (val phase = scan) {
         ScanPhase.Ready -> Screen(
             title = Mode.RECOGNIZE.title,
-            hint = "Click: scan  Right: mode",
+            hint = "Tap: scan  Hold: mode",
             crosshair = true,
         )
         ScanPhase.Working -> Screen(Mode.RECOGNIZE.title, body = "Looking...")
         is ScanPhase.Message -> Screen(
             title = Mode.RECOGNIZE.title,
             body = phase.text,
-            hint = "Click: scan again",
+            hint = "Tap: scan again",
         )
         is ScanPhase.ShowCard -> if (voiceActive) {
             Screen(
                 title = phase.card.name,
                 status = "${phase.cursor.index + 1}/${phase.cursor.items.size}",
                 body = phase.cursor.current()?.second.orEmpty(),
-                hint = "Scroll: next  Click: repeat",
+                hint = "Scroll: next  Tap: repeat",
             )
         } else if (phase.card.glance != null && !phase.expanded) {
             Screen(
                 title = phase.card.glance.name,
                 body = phase.card.glance.line,
-                hint = "Scroll: more  Click: scan",
+                hint = "Scroll: more  Tap: scan",
             )
         } else {
             Screen(
                 title = Mode.RECOGNIZE.title,
                 body = phase.card.displayText(),
-                hint = "Scroll: read  Click: scan",
+                hint = "Scroll: read  Tap: scan",
             )
         }
     }
 
     private companion object {
         const val CAPTURE_PHOTOS = 3
-        const val MENU_VOICE = 0
-        const val MENU_SIZE = 2
         const val PAIRING_ROWS = 4
+        val FACE_MISSES = setOf("no_face", "multiple_faces")
     }
 }

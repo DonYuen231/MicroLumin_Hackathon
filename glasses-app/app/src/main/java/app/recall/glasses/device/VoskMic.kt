@@ -24,6 +24,8 @@ private const val TAG = "RecallVoice"
 private const val SAMPLE_RATE = 16_000
 private const val FRAME_SAMPLES = 1_600 // 100 ms
 private const val SPEECH_EVENT_MS = 500L
+private const val STABLE_FRAMES = 2
+private const val CARRY_MS = 3_000L
 
 /**
  * Owns the microphone while the app is open. Android gives the mic to one recorder at a time,
@@ -144,6 +146,10 @@ class VoskMic(
         val buffer = ShortArray(FRAME_SAMPLES)
         val gate = SpeechGate()
         var lastText = ""
+        var candidate = ""
+        var stableFrames = 0
+        var carry = ""
+        var carryAtMs = 0L
         var lastSpeechEvent = 0L
         while (running) {
             val count = record.read(buffer, 0, buffer.size)
@@ -155,6 +161,9 @@ class VoskMic(
                 clearRequested = false
                 recognizer.reset()
                 lastText = ""
+                candidate = ""
+                stableFrames = 0
+                carry = ""
             }
             if (gate.isSpeech(level(buffer, count))) {
                 val nowMs = System.currentTimeMillis()
@@ -165,16 +174,37 @@ class VoskMic(
             }
 
             val finished = recognizer.acceptWaveForm(buffer, count)
-            val text = if (finished) {
+            val words = if (finished) {
                 JSONObject(recognizer.result).optString("text")
             } else {
                 JSONObject(recognizer.partialResult).optString("partial")
             }
-            if (text.isNotBlank() && text != lastText) {
+            // A pause at the comma can split a phrase, so the last finished part carries over.
+            val clockMs = System.currentTimeMillis()
+            val carried = carry.takeIf { words.isNotBlank() && clockMs - carryAtMs <= CARRY_MS }
+            val text = listOfNotNull(carried, words.ifBlank { null }).joinToString(" ")
+            // A partial guess flickers in noise, so it must hold steady before it counts.
+            if (text == candidate) {
+                stableFrames++
+            } else {
+                candidate = text
+                stableFrames = 0
+            }
+            val settled = finished || stableFrames >= STABLE_FRAMES
+            if (settled && text.isNotBlank() && text != lastText) {
                 Log.d(TAG, "heard: $text")
+                lastText = text
                 main.post { events.onPhrase(text) }
             }
-            lastText = if (finished) "" else text
+            if (finished) {
+                if (words.isNotBlank()) {
+                    carry = words
+                    carryAtMs = clockMs
+                }
+                lastText = ""
+                candidate = ""
+                stableFrames = 0
+            }
         }
     }
 

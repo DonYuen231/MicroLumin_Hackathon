@@ -18,6 +18,8 @@ import org.junit.Test
 
 private val T0: Instant = Instant.parse("2026-11-21T15:15:03Z")
 private val T1: Instant = Instant.parse("2026-11-21T15:18:10Z")
+private const val HELLO = "hello nice to meet you"
+private const val BYE = "goodbye see you next time"
 
 private val MATCH_JSON = """
 {"match":true,"person_id":"p_1","score":0.62,"card":{"name":"Jordan Lee",
@@ -106,6 +108,23 @@ class GlassesCoreTest {
         assertEquals(200, request("DELETE", "$base/captures/$id").first)
         assertFalse(File(root, id).exists())
         assertEquals(404, request("DELETE", "$base/captures/$id").first)
+    }
+
+    @Test
+    fun serverReportsStatusToThePhoneOnly() {
+        val port = ServerSocket(0).use { it.localPort }
+        var allowed = true
+        val server = CaptureServer(store, port, { allowed }, status = { """{"listening":true}""" })
+        server.startServer()
+        try {
+            val (code, body) = request("GET", "http://127.0.0.1:$port/status")
+            assertEquals(200, code)
+            assertTrue(JSONObject(body).getBoolean("listening"))
+            allowed = false
+            assertEquals(403, request("GET", "http://127.0.0.1:$port/status").first)
+        } finally {
+            server.stop()
+        }
     }
 
     @Test
@@ -301,7 +320,7 @@ class GlassesCoreTest {
         val rig = Rig(result = parseRecognize(json), mic = mic, announcer = announcer)
         rig.controller.onForeground()
 
-        mic.hear("hello")
+        mic.hear(HELLO)
         assertTrue(rig.ui.last.recording)
         assertEquals(1, rig.cues.starts)
         assertEquals(1, rig.cues.matches)
@@ -310,7 +329,7 @@ class GlassesCoreTest {
         assertTrue("A recording must not be listed", store.list().isEmpty())
 
         rig.time = T0.plusSeconds(6)
-        mic.hear("nice meeting you")
+        mic.hear(BYE)
         val saved = store.list().single()
         assertEquals("p_1", saved.personId)
         assertEquals(3, saved.photos)
@@ -325,7 +344,7 @@ class GlassesCoreTest {
         val mic = FakeVoiceMic()
         val rig = Rig(result = RecognizeResult.Failure("no_match"), mic = mic)
         rig.controller.onForeground()
-        mic.hear("hi")
+        mic.hear(HELLO)
         assertEquals("New person", rig.ui.last.title)
         rig.controller.onInput(InputAction.Primary)
         assertNull(store.list().single().personId)
@@ -336,7 +355,7 @@ class GlassesCoreTest {
         val mic = FakeVoiceMic()
         val rig = Rig(result = parseRecognize(MATCH_JSON), mic = mic)
         rig.controller.onForeground()
-        mic.hear("hey")
+        mic.hear(HELLO)
         rig.controller.onInput(InputAction.Primary)
         assertNull(store.list().single().personId)
     }
@@ -346,7 +365,7 @@ class GlassesCoreTest {
         val mic = FakeVoiceMic()
         val rig = Rig(result = RecognizeResult.Failure("no_face"), mic = mic)
         rig.controller.onForeground()
-        mic.hear("hello")
+        mic.hear(HELLO)
         assertEquals(1, rig.cues.noMatches)
         assertFalse(mic.fileOpen)
         assertTrue(root.list().orEmpty().none { it.startsWith("c_") })
@@ -360,7 +379,7 @@ class GlassesCoreTest {
             val mic = FakeVoiceMic()
             val rig = Rig(result = RecognizeResult.Failure(reason), mic = mic)
             rig.controller.onForeground()
-            mic.hear("hello")
+            mic.hear(HELLO)
             assertFalse(reason, rig.ui.last.recording)
             assertFalse(reason, mic.fileOpen)
             assertEquals(reason, 1, rig.cues.noMatches)
@@ -369,29 +388,261 @@ class GlassesCoreTest {
     }
 
     @Test
-    fun silenceEndsAHandsFreeRecording() {
+    fun stageBackupCardDoesNotCountAsAConfirmedFace() {
+        val mic = FakeVoiceMic()
+        val backup = MATCH_JSON.replace("\"score\":0.62", "\"score\":0.0")
+        val rig = Rig(result = parseRecognize(backup), mic = mic)
+        rig.controller.onForeground()
+        mic.hear(HELLO)
+        assertFalse(rig.ui.last.recording)
+        assertTrue(root.list().orEmpty().none { it.startsWith("c_") })
+    }
+
+    @Test
+    fun listeningRecoversIfTheMicWasLost() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        mic.listening = false
+        rig.controller.onTick()
+        assertTrue(mic.listening)
+    }
+
+    @Test
+    fun glassesOffTheFaceDoNotListen() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onWornChanged(false)
+        assertFalse(mic.listening)
+        assertEquals("Not worn", rig.ui.last.status)
+        rig.controller.onTick()
+        assertFalse("Must not restart while off the face", mic.listening)
+        rig.controller.onWornChanged(true)
+        assertTrue(mic.listening)
+    }
+
+    @Test
+    fun takingTheGlassesOffSavesAHandsFreeRecording() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        mic.hear(HELLO)
+        rig.controller.onWornChanged(false)
+        assertEquals(1, store.list().size)
+        assertFalse(mic.listening)
+    }
+
+    @Test
+    fun aSlowFaceCheckKeepsNothing() {
+        val deferred = ArrayDeque<Runnable>()
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic, worker = Executor { deferred.add(it) })
+        rig.controller.onForeground()
+        mic.hear(HELLO)
+        rig.time = T0.plusSeconds(15)
+        rig.controller.onTick()
+        while (deferred.isNotEmpty()) deferred.removeFirst().run()
+        assertFalse(rig.ui.last.recording)
+        assertFalse(mic.fileOpen)
+        assertEquals(1, rig.cues.noMatches)
+        assertTrue(root.list().orEmpty().none { it.startsWith("c_") })
+    }
+
+    @Test
+    fun homeShowsTheStartPhraseAndNoMouseOption() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onPhoneLink(true)
+        assertEquals("● Listening", rig.ui.last.status)
+        assertTrue(rig.ui.last.body.contains("Hello, nice to meet you"))
+        assertTrue(rig.ui.last.hint.contains("Phone connected"))
+        assertFalse(rig.ui.last.body.contains("mouse", ignoreCase = true))
+        assertFalse(rig.ui.last.hint.contains("mouse", ignoreCase = true))
+    }
+
+    @Test
+    fun singleTapStartsAndEndsARecordingInALoop() {
+        val mic = FakeVoiceMic()
+        val announcer = FakeAnnouncer()
+        var clock = 0L
+        val rig = Rig(mic = mic, announcer = announcer)
+        rig.controller.onForeground()
+        repeat(3) { round ->
+            clock += 1
+            rig.time = T0.plusSeconds(clock * 2)
+            rig.controller.onInput(InputAction.Primary)
+            assertTrue("Round $round records", rig.ui.last.recording)
+            assertEquals(round + 1, announcer.started)
+            clock += 1
+            rig.time = T0.plusSeconds(clock * 2)
+            rig.controller.onInput(InputAction.Primary)
+            assertFalse("Round $round ends", rig.ui.last.recording)
+            assertEquals("Back to the ready screen", "Recall", rig.ui.last.title)
+            assertEquals(round + 1, announcer.finished)
+            assertTrue("Still listening", mic.listening)
+            assertEquals(round + 1, store.list().size)
+        }
+    }
+
+    @Test
+    fun aTappedRecordingIsKeptWithoutAConfirmedFace() {
+        listOf("no_face", REASON_PHONE_UNREACHABLE).forEach { reason ->
+            val mic = FakeVoiceMic()
+            val rig = Rig(result = RecognizeResult.Failure(reason), mic = mic)
+            rig.controller.onForeground()
+            rig.controller.onInput(InputAction.Primary)
+            assertTrue(reason, rig.ui.last.recording)
+            rig.controller.onInput(InputAction.Primary)
+        }
+    }
+
+    @Test
+    fun aTapAfterAVoiceRecordingReturnsHomeFromAnyMode() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onInput(InputAction.SwitchMode)
+        mic.hear(HELLO)
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals("Recall", rig.ui.last.title)
+    }
+
+    @Test
+    fun aTapKeepsLookingUntilItFindsTheFace() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(result = RecognizeResult.Failure("no_face"), mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals("Look at their face", rig.ui.last.title)
+        assertTrue(rig.ui.last.crosshair)
+
+        rig.time = T0.plusSeconds(3)
+        rig.controller.onTick()
+        assertEquals("Still looking", "Look at their face", rig.ui.last.title)
+
+        rig.phoneResult = parseRecognize(
+            MATCH_JSON.replace("\"score\"", "\"capture_person_id\":\"p_1\",\"score\""),
+        )
+        rig.time = T0.plusSeconds(6)
+        rig.controller.onTick()
+        assertEquals(1, rig.cues.matches)
+        assertFalse(rig.ui.last.crosshair)
+
+        rig.time = T0.plusSeconds(8)
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals("p_1", store.list().single().personId)
+        assertFalse(rig.ui.last.body.contains("no face"))
+    }
+
+    @Test
+    fun aTapStopsLookingAfterSixTriesAndSaysSo() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(result = RecognizeResult.Failure("no_face"), mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onInput(InputAction.Primary)
+        (1..8).forEach {
+            rig.time = T0.plusSeconds(it * 3L)
+            mic.speak()
+            rig.controller.onTick()
+        }
+        assertEquals("New person", rig.ui.last.title)
+        rig.controller.onInput(InputAction.Primary)
+        assertTrue(rig.ui.last.body.contains("Saved, no face found"))
+        assertEquals(1, store.list().size)
+    }
+
+    @Test
+    fun aKnownFaceInALaterPhotoIsStillRecognized() {
+        val mic = FakeVoiceMic()
+        val match = parseRecognize(
+            MATCH_JSON.replace("\"score\"", "\"capture_person_id\":\"p_1\",\"score\""),
+        )
+        var calls = 0
+        val answers = listOf(RecognizeResult.Failure("no_face"), match)
+        val rig = Rig(mic = mic, recognizer = { answers[minOf(calls++, 1)] })
+        rig.controller.onForeground()
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals(2, calls)
+        assertEquals(1, rig.cues.matches)
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals("p_1", store.list().single().personId)
+    }
+
+    @Test
+    fun theRecordingTransfersAsSoonAsItEnds() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals("Not while recording", 0, rig.readyCalls)
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals(1, rig.readyCalls)
+    }
+
+    @Test
+    fun aClickCaptureAlsoTransfersAsSoonAsItEnds() {
+        val rig = Rig()
+        rig.controller.onInput(InputAction.SwitchMode)
+        rig.controller.onInput(InputAction.Primary)
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals(1, rig.readyCalls)
+    }
+
+    @Test
+    fun aSmallFingerWobbleIsStillATap() {
+        val tracker = GestureTracker()
+        tracker.down(100f, 100f, 0)
+        tracker.move(120f, 158f)
+        assertEquals(InputAction.Primary, tracker.up(112f, 150f, 120))
+    }
+
+    @Test
+    fun homeSaysWhenThePhoneIsNotConnected() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        rig.controller.onPhoneLink(false)
+        assertTrue(rig.ui.last.body.contains("Phone not connected"))
+    }
+
+    @Test
+    fun aShortGreetingNoLongerStartsARecording() {
         val mic = FakeVoiceMic()
         val rig = Rig(mic = mic)
         rig.controller.onForeground()
         mic.hear("hello")
+        assertFalse(rig.ui.last.recording)
+        assertTrue(root.list().orEmpty().none { it.startsWith("c_") })
+    }
+
+    @Test
+    fun silenceEndsAHandsFreeRecording() {
+        val mic = FakeVoiceMic()
+        val rig = Rig(mic = mic)
+        rig.controller.onForeground()
+        mic.hear(HELLO)
         rig.time = T0.plusSeconds(20)
         rig.controller.onTick()
         assertEquals(1, store.list().size)
     }
 
     @Test
-    fun clickCaptureReleasesTheMicAndGetsItBack() {
+    fun aTapInCaptureModeStillChecksTheFace() {
         val mic = FakeVoiceMic()
         val announcer = FakeAnnouncer()
-        val rig = Rig(mic = mic, announcer = announcer)
+        val json = MATCH_JSON.replace("\"score\"", "\"capture_person_id\":\"p_1\",\"score\"")
+        val rig = Rig(result = parseRecognize(json), mic = mic, announcer = announcer)
         rig.controller.onForeground()
-        assertTrue(mic.listening)
         rig.controller.onInput(InputAction.SwitchMode)
         rig.controller.onInput(InputAction.Primary)
-        assertFalse("MediaRecorder needs the mic", mic.listening)
-        assertEquals("A click recording is announced too", 1, announcer.started)
-        rig.controller.onInput(InputAction.Primary)
         assertTrue(mic.listening)
+        assertEquals(1, rig.cues.matches)
+        assertEquals(1, announcer.started)
+        rig.controller.onInput(InputAction.Primary)
+        assertEquals("p_1", store.list().single().personId)
+        assertEquals("Back to the ready screen", "Recall", rig.ui.last.title)
         assertEquals(1, announcer.finished)
     }
 
@@ -400,7 +651,7 @@ class GlassesCoreTest {
         val mic = FakeVoiceMic()
         val rig = Rig(mic = mic)
         rig.controller.onForeground()
-        mic.hear("hello")
+        mic.hear(HELLO)
         rig.controller.onBackground()
         assertEquals(1, store.list().size)
         assertFalse(mic.listening)
@@ -431,8 +682,7 @@ class GlassesCoreTest {
     @Test
     fun pairingListsMiceAndPairsTheSelectedOne() {
         val rig = Rig()
-        rig.controller.onInput(InputAction.Scroll(1))
-        rig.controller.onInput(InputAction.Primary)
+        rig.controller.openPairing()
         assertEquals("Pair mouse", rig.ui.last.title)
 
         rig.pairing.publish(
@@ -482,8 +732,11 @@ class GlassesCoreTest {
         worker: Executor = Executor { it.run() },
         mic: VoiceMic = NoVoiceMic,
         announcer: Announcer = NoAnnouncer,
+        private val recognizer: (() -> RecognizeResult)? = null,
     ) {
         var time: Instant = T0
+        var phoneResult: RecognizeResult = result
+        var readyCalls = 0
         val ui = FakeUi()
         val speaker = FakeSpeaker()
         val cues = FakeCues()
@@ -493,7 +746,11 @@ class GlassesCoreTest {
             audio = audio,
             store = store,
             phone = object : PhoneApi {
-                override fun recognize(jpeg: ByteArray) = result
+                override fun recognize(jpeg: ByteArray) = recognizer?.invoke() ?: phoneResult
+
+                override fun captureReady() {
+                    readyCalls++
+                }
             },
             speaker = speaker,
             cues = cues,
@@ -606,6 +863,8 @@ class GlassesCoreTest {
         }
 
         fun hear(text: String) = events!!.onPhrase(text)
+
+        fun speak() = events!!.onSpeech()
     }
 
     private class FakeAnnouncer : Announcer {

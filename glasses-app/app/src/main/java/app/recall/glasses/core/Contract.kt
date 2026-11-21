@@ -164,6 +164,9 @@ object NoAnnouncer : Announcer {
 
 interface PhoneApi {
     fun recognize(jpeg: ByteArray): RecognizeResult
+
+    /** Tells the phone a finished capture is ready, so it transfers right away. */
+    fun captureReady() = Unit
 }
 
 interface Speaker {

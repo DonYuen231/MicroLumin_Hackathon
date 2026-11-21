@@ -16,6 +16,7 @@ class CaptureServer(
     port: Int = PORT,
     private val isAllowed: (String) -> Boolean,
     private val onChanged: () -> Unit = {},
+    private val status: () -> String = { "{}" },
 ) : NanoHTTPD(port) {
 
     fun startServer() = start(SOCKET_READ_TIMEOUT, true)
@@ -36,6 +37,8 @@ class CaptureServer(
 
     private fun route(method: Method, uri: String): Response {
         if (uri == "/captures" && method == Method.GET) return list()
+        // Read-only, so the phone can tell how the glasses are doing with no USB cable attached.
+        if (uri == "/status" && method == Method.GET) return json(Response.Status.OK, status())
         PHOTO.matchEntire(uri)?.let { match ->
             if (method != Method.GET) return notAllowed()
             val index = match.groupValues[2].toIntOrNull() ?: return notFound()

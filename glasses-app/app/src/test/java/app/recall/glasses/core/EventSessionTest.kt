@@ -6,60 +6,82 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private const val HELLO = "hello nice to meet you"
+private const val BYE = "goodbye see you next time"
+
 class EventSessionTest {
     private fun recordingSession(at: Long = 0): EventSession = EventSession().apply {
-        assertEquals(EventStep.StartCapture, onPhrase("hello", at))
+        assertEquals(EventStep.StartCapture, onPhrase(HELLO, at))
         onRecording(at)
     }
 
     @Test
-    fun everyGreetingStartsACapture() {
-        listOf("hello", "hi there", "hey", "oh nice to meet you").forEach {
+    fun theFullGreetingStartsACapture() {
+        listOf(HELLO, "[unk] hello nice to meet you", "hello nice to meet you [unk]").forEach {
             assertEquals(it, EventStep.StartCapture, EventSession().onPhrase(it, 0))
         }
     }
 
     @Test
-    fun partOfAWordIsNotAGreeting() {
-        assertFalse(containsPhrase("this is high", listOf("hi")))
-        assertTrue(containsPhrase("[unk] hi [unk]", listOf("hi")))
-        assertNull(EventSession().onPhrase("goodbye", 0))
+    fun partOfTheGreetingDoesNothing() {
+        listOf("hello", "hi", "hey", "nice to meet you", "hello [unk] nice to meet you").forEach {
+            assertNull(it, EventSession().onPhrase(it, 0))
+        }
     }
 
     @Test
-    fun everyClosingPhraseStopsTheRecording() {
-        listOf("nice meeting you", "see you later", "see you", "bye", "goodbye").forEach {
-            assertEquals(it, EventStep.Stop, recordingSession().onPhrase(it, 6_000))
+    fun partOfAWordIsNotAPhrase() {
+        assertFalse(containsPhrase("othello nice to meet you", listOf(HELLO)))
+        assertTrue(containsPhrase("[unk] $BYE [unk]", listOf(BYE)))
+    }
+
+    @Test
+    fun theFullClosingStopsTheRecording() {
+        assertEquals(EventStep.Stop, recordingSession().onPhrase(BYE, 6_000))
+    }
+
+    @Test
+    fun partOfTheClosingDoesNothing() {
+        listOf("bye", "goodbye", "see you", "see you later", "see you next time").forEach {
+            assertNull(it, recordingSession().onPhrase(it, 6_000))
         }
     }
 
     @Test
     fun aClosingPhraseInTheFirstSecondsIsIgnored() {
         val session = recordingSession()
-        assertEquals(EventStep.ClearHeard, session.onPhrase("bye", 4_999))
-        assertEquals(EventStep.Stop, session.onPhrase("bye", 5_000))
+        assertEquals(EventStep.ClearHeard, session.onPhrase(BYE, 4_999))
+        assertEquals(EventStep.Stop, session.onPhrase(BYE, 5_000))
     }
 
     @Test
     fun greetingsAreIgnoredWhileRecording() {
-        assertNull(recordingSession().onPhrase("hello", 10_000))
+        assertNull(recordingSession().onPhrase(HELLO, 10_000))
     }
 
     @Test
-    fun greetingsAreIgnoredForThirtySecondsAfterARecording() {
+    fun theNextGreetingWorksFiveSecondsAfterARecording() {
         val session = recordingSession()
         session.onFinished(100_000)
-        assertEquals(EventStep.ClearHeard, session.onPhrase("hi", 129_999))
-        assertEquals(EventStep.StartCapture, session.onPhrase("hi", 130_000))
+        assertEquals(EventStep.ClearHeard, session.onPhrase(HELLO, 104_999))
+        assertEquals(EventStep.StartCapture, session.onPhrase(HELLO, 105_000))
+    }
+
+    @Test
+    fun aTapSkipsTheWaitButNotAnActiveRecording() {
+        val session = recordingSession()
+        assertFalse(session.onTapStart())
+        session.onFinished(100_000)
+        assertTrue(session.onTapStart())
     }
 
     @Test
     fun noFaceWaitsBrieflyBeforeListeningAgain() {
         val session = EventSession()
-        session.onPhrase("hi", 0)
+        session.onPhrase(HELLO, 0)
         session.onNoFace(1_000)
-        assertEquals(EventStep.ClearHeard, session.onPhrase("hi", 8_999))
-        assertEquals(EventStep.StartCapture, session.onPhrase("hi", 9_000))
+        assertEquals(EventStep.ClearHeard, session.onPhrase(HELLO, 8_999))
+        assertEquals(EventStep.StartCapture, session.onPhrase(HELLO, 9_000))
     }
 
     @Test

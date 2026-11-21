@@ -21,7 +21,7 @@ class EventSession(private val config: VoiceConfig = VoiceConfig()) {
 
     fun onPhrase(text: String, nowMs: Long): EventStep? = when (phase) {
         Phase.WAITING -> when {
-            !containsPhrase(text, config.greetings) -> null
+            !isGreeting(text, config.greetings) -> null
             nowMs < ignoreUntilMs -> EventStep.ClearHeard
             else -> {
                 phase = Phase.CHECKING
@@ -37,6 +37,13 @@ class EventSession(private val config: VoiceConfig = VoiceConfig()) {
             }
         }
         Phase.CHECKING, Phase.STOPPING -> null
+    }
+
+    /** A tap is deliberate, so it skips the wait after the last recording. */
+    fun onTapStart(): Boolean {
+        if (phase != Phase.WAITING) return false
+        phase = Phase.CHECKING
+        return true
     }
 
     fun onSpeech(nowMs: Long) {
@@ -77,6 +84,21 @@ class EventSession(private val config: VoiceConfig = VoiceConfig()) {
 fun containsPhrase(text: String, phrases: List<String>): Boolean {
     val heard = " " + normalizeWords(text) + " "
     return phrases.any { heard.contains(" " + normalizeWords(it) + " ") }
+}
+
+/**
+ * A one-word greeting must open what was said, because "hi" is easily misheard in the middle of
+ * other people's speech. A longer phrase like "nice to meet you" can appear anywhere.
+ */
+fun isGreeting(text: String, greetings: List<String>): Boolean {
+    val heard = normalizeWords(text)
+    return greetings.map(::normalizeWords).any { phrase ->
+        if (' ' in phrase) {
+            " $heard ".contains(" $phrase ")
+        } else {
+            heard == phrase || heard.startsWith("$phrase ")
+        }
+    }
 }
 
 private fun normalizeWords(text: String): String =
