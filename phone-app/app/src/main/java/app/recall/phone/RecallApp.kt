@@ -5,6 +5,7 @@ import app.recall.phone.data.PeopleRepository
 import app.recall.phone.data.RecallDatabase
 import app.recall.phone.data.SettingsStore
 import app.recall.phone.hub.CaptureProcessor
+import app.recall.phone.hub.Notifier
 import app.recall.phone.hub.PhoneServer
 import app.recall.phone.hub.Recognizer
 import app.recall.phone.net.BackendClient
@@ -21,7 +22,15 @@ class AppContainer(app: Application) {
     val people = PeopleRepository(RecallDatabase.create(app).dao(), app.filesDir)
     val backend = BackendClient { settings.current() }
     private val glasses = GlassesClient { settings.current().glassesAddress }
-    val captures = CaptureProcessor(app.cacheDir, people, backend, glasses, settings)
+    private val notifier = Notifier(app)
+    val captures = CaptureProcessor(
+        app.cacheDir,
+        people,
+        backend,
+        glasses,
+        settings,
+        onSaved = notifier::profileSaved,
+    )
     val server = PhoneServer(Recognizer(people, backend, settings), settings)
 }
 

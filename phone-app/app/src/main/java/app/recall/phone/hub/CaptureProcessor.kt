@@ -9,6 +9,7 @@ import app.recall.phone.core.Encounter
 import app.recall.phone.core.MatchDecision
 import app.recall.phone.core.MetAt
 import app.recall.phone.core.Profile
+import app.recall.phone.core.SyncRetryPolicy
 import app.recall.phone.core.TranscriptIn
 import app.recall.phone.core.matchFace
 import app.recall.phone.core.parseInstant
@@ -21,6 +22,7 @@ import app.recall.phone.net.GlassesException
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.Instant
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,53 +50,95 @@ class CaptureProcessor(
     private val backend: BackendClient,
     private val glasses: GlassesClient,
     private val settings: SettingsStore,
+    private val onSaved: (personId: String, name: String, updated: Boolean) -> Unit =
+        { _, _, _ -> },
 ) {
     private val workDir = File(cacheDir, "captures")
     private val lock = Mutex()
+    private val retries = SyncRetryPolicy()
     private val mutableState = MutableStateFlow(CaptureRunState())
     val state: StateFlow<CaptureRunState> = mutableState
 
+    /** The manual button. It waits for a background check, then retries every capture. */
     suspend fun pullAndProcess() {
-        if (!lock.tryLock()) return
+        if (mutableState.value.running) return
+        lock.lock()
         try {
+            retries.reset()
             mutableState.value = CaptureRunState(running = true, message = "Checking the glasses")
             val captures = glasses.list().captures
             if (captures.isEmpty()) {
                 mutableState.update { it.copy(message = "No new captures on the glasses.") }
                 return
             }
-            mutableState.update {
-                it.copy(
-                    message = "Processing ${captures.size} capture(s)",
-                    items = captures.map { c -> CaptureItem(c.captureId, "Waiting") },
-                )
-            }
-            var failed = 0
-            for (capture in captures) {
-                try {
-                    processOne(capture)
-                    setStep(capture.captureId, "Saved", ItemStatus.DONE)
-                } catch (e: BackendException) {
-                    failed++
-                    setStep(capture.captureId, e.message.orEmpty(), ItemStatus.FAILED)
-                } catch (e: GlassesException) {
-                    failed++
-                    setStep(capture.captureId, e.message.orEmpty(), ItemStatus.FAILED)
-                }
-            }
-            val summary = if (failed == 0) {
-                "All captures saved."
-            } else {
-                "$failed capture(s) failed and stayed on the glasses. Try again."
-            }
-            mutableState.update { it.copy(message = summary) }
-        } catch (e: GlassesException) {
-            mutableState.update { it.copy(message = e.message.orEmpty()) }
+            processAll(captures)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            mutableState.update { it.copy(message = failureText(e)) }
         } finally {
             mutableState.update { it.copy(running = false) }
             lock.unlock()
         }
     }
+
+    /** The 30-second check. It changes the screen only when there is something to process. */
+    suspend fun syncInBackground() {
+        if (!lock.tryLock()) return
+        var showing = false
+        try {
+            val captures = glasses.list().captures.filter {
+                retries.shouldTry(it.captureId) || people.isProcessed(it.captureId)
+            }
+            if (captures.isEmpty()) return
+            showing = true
+            mutableState.value = CaptureRunState(running = true)
+            processAll(captures)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The glasses may be off or out of range. The next check tries again.
+        } finally {
+            if (showing) mutableState.update { it.copy(running = false) }
+            lock.unlock()
+        }
+    }
+
+    private suspend fun processAll(captures: List<CaptureSummary>) {
+        mutableState.update {
+            it.copy(
+                message = "Processing ${captures.size} capture(s)",
+                items = captures.map { c -> CaptureItem(c.captureId, "Waiting") },
+            )
+        }
+        var failed = 0
+        for (capture in captures) {
+            try {
+                processOne(capture)
+                retries.recordSuccess(capture.captureId)
+                setStep(capture.captureId, "Saved", ItemStatus.DONE)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed++
+                retries.recordFailure(capture.captureId)
+                setStep(capture.captureId, failureText(e), ItemStatus.FAILED)
+            }
+        }
+        val summary = if (failed == 0) {
+            "All captures saved."
+        } else {
+            "$failed capture(s) failed and stayed on the glasses. Try again."
+        }
+        mutableState.update { it.copy(message = summary) }
+    }
+
+    private fun failureText(e: Exception): String =
+        if (e is BackendException || e is GlassesException) {
+            e.message.orEmpty()
+        } else {
+            "Could not process this capture."
+        }
 
     private suspend fun processOne(capture: CaptureSummary) {
         val id = capture.captureId
@@ -153,7 +197,8 @@ class CaptureProcessor(
 
             setStep(id, "Saving")
             val thumbnail = faces.firstOrNull()?.let { (file, face) -> makeThumbnail(file, face) }
-            people.saveCapture(existingId, profile, embeddings, thumbnail, id)
+            val personId = people.saveCapture(existingId, profile, embeddings, thumbnail, id)
+            onSaved(personId, profile.name, existingId != null)
 
             setStep(id, "Removing from glasses")
             glasses.delete(id)
