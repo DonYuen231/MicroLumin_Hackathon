@@ -94,3 +94,7 @@ A product that recognizes faces and records conversations carries real risk, and
 ## Built with
 
 Python, FastAPI, Pydantic, InsightFace, ffmpeg, Docker, Kotlin, Jetpack Compose, Ktor, Room, WorkManager, NanoHTTPD, Vosk, GLM 5.3, MiMo v2.6 Pro, and Claude Code.
+
+## License
+
+Recall is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use requires separate permission. Third-party components and models keep their own licenses.

@@ -12,6 +12,7 @@ Built at [Worn: Smart Glasses Hackathon](README.md), NYC, November 20 to 21, 202
 ![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-UI-4285F4?logo=jetpackcompose&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
 ![Status](https://img.shields.io/badge/status-hackathon%20prototype-orange)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
 
 [Project write-up](README.md) · [User guide](docs/USER_GUIDE.md) · [API reference](docs/API.md)
 
@@ -254,4 +255,6 @@ Built on [FastAPI](https://fastapi.tiangolo.com/), [InsightFace](https://github.
 
 ## License
 
-No open source license has been selected, so all rights are reserved. Third-party components and models keep their own licenses.
+Recall is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). You may use, change, and share it for noncommercial purposes. Commercial use requires separate permission.
+
+Third-party components and models keep their own licenses. InsightFace's pretrained models are limited to non-commercial research.
