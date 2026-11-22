@@ -18,7 +18,7 @@ fun latestEncounter(profile: Profile): Encounter? =
 fun formatDate(value: String?, zone: ZoneId = ZoneId.systemDefault()): String =
     parseInstant(value)?.atZone(zone)?.format(DATE).orEmpty()
 
-/** Builds the glasses card from README section 7.1. */
+/** Builds the glasses card described in docs/API.md. */
 fun buildCard(profile: Profile, zone: ZoneId = ZoneId.systemDefault()): ProfileCard {
     val items = buildList {
         latestEncounter(profile)?.let { encounter ->

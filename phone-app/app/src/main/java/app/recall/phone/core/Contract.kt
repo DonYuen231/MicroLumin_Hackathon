@@ -11,7 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonTransformingSerializer
 import kotlinx.serialization.json.buildJsonObject
 
-/** The JSON contract from README section 7 and 8. */
+/** The JSON contract described in docs/API.md. */
 val AppJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true

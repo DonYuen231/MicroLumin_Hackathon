@@ -181,7 +181,7 @@ Push-Location glasses-app; .\gradlew.bat assembleDebug; Pop-Location
 & $adb -s <glasses> shell cmd package set-home-activity app.recall.glasses/.MainActivity
 ```
 
-**Optional: join the glasses to the hotspot.** This wireless setup isn't reliable yet, so don't use it for a demo. The hotspot must use **WPA2-Personal**, and the phone's **Glasses address** must be the glasses' Wi-Fi IP. Get the hotspot name and password from the team, and don't commit them:
+**Optional: join the glasses to the hotspot.** This wireless setup isn't reliable yet, so don't use it for a demo. The hotspot must use **WPA2-Personal**, and the phone's **Glasses address** must be the glasses' Wi-Fi IP. Never commit the hotspot name or password:
 
 ```powershell
 & $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity --es wifi_ssid "'<hotspot name>'" --es wifi_password "'<hotspot password>'"

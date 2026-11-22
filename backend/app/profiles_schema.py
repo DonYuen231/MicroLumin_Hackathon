@@ -1,4 +1,4 @@
-"""Profile models (README section 8) and request models (section 7.3)."""
+"""Profile and request models. See docs/API.md."""
 
 from datetime import UTC, datetime
 from typing import Any, Literal

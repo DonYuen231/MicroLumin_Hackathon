@@ -216,7 +216,7 @@ def test_unknown_name(client, upstream):
     assert build(client).json()["name"] == "Unknown"
 
 
-# ---- section 8 enforcement and retry -----------------------------------------------------
+# ---- profile rules and retry ------------------------------------------------------------
 
 LONG = "x" * 61
 

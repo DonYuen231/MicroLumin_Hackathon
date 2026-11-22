@@ -73,7 +73,7 @@ class Recognizer(
         const val RETRY_DELAY_MS = 300L
     }
 
-    /** The stage backup from README section 13. It is off until a person is chosen. */
+    /** The demo backup card. It is off until a person is chosen. */
     private suspend fun backupOrUnreachable(): RecognizeResponse {
         val backup = people.demoBackup()
             ?: return RecognizeResponse(false, reason = "backend_unreachable")

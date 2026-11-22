@@ -1,4 +1,4 @@
-"""Profile building: LLM call, section 8 enforcement, server-controlled fields, merge, refresh."""
+"""Profile building: LLM call, rule enforcement, server-controlled fields, merge, refresh."""
 
 import json
 import logging
