@@ -1,257 +1,96 @@
-# Recall
+# Recall: Giving Smart Glasses a Memory for People
 
-**A memory for the people you meet, built for smart glasses.**
+*Built by Don Yuen at Worn: Smart Glasses Hackathon, NYC, November 20 to 21, 2026.*
 
-Recall turns a conversation into a private profile. The next time you see that person, your glasses show their name, what you talked about, what you promised, and what to avoid bringing up.
+[Build and install](BUILD.md) · [User guide](docs/USER_GUIDE.md) · [API reference](docs/API.md)
 
-Built at [Worn: Smart Glasses Hackathon](docs/WRITEUP.md), NYC, November 20 to 21, 2026, for the MicroLumin M6 glasses.
+Recall helps you remember the people you meet. It records a conversation on smart glasses, turns it into a private profile on your phone, and brings that profile back the moment you see the person again.
 
-![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi&logoColor=white)
-![Kotlin](https://img.shields.io/badge/Kotlin-Android-7F52FF?logo=kotlin&logoColor=white)
-![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-UI-4285F4?logo=jetpackcompose&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
-![Status](https://img.shields.io/badge/status-hackathon%20prototype-orange)
+## The problem
 
-[Write-up](docs/WRITEUP.md) · [User guide](docs/USER_GUIDE.md) · [API reference](docs/API.md)
+Networking runs on memory, and memory fails at the worst moment. You recognize someone across the room, but you can't place their name, what they work on, or what you promised to send them.
 
-> **Recall records people and processes their faces.** It is a research prototype. Get consent before you record anyone, and read [Privacy and responsible use](#privacy-and-responsible-use) before running it.
+Contact apps don't solve this, because they need you to stop and type after every conversation. The hackathon's theme was "Second nature": wearable AI that works so naturally it disappears. I wanted the glasses to handle remembering, so the wearer could stay in the conversation.
 
-## How it works
+## What I built
 
-1. **Meet someone.** Tap the glasses or say "Hello, nice to meet you." Recall takes a few photos, announces the recording out loud, and records the conversation.
-2. **Build a profile.** When the conversation ends, the phone transfers the capture and has the backend extract a face vector, a speaker-labeled transcript, and a structured profile.
-3. **Follow up.** The phone schedules follow-ups the conversation calls for and prepares a draft. You review it and send it yourself.
-4. **Meet them again.** Look at them and tap. The glasses show who they are and what matters before you say hello.
+Recall is a three-part system that runs on the MicroLumin M6 glasses, an Android phone, and a small backend.
 
-```text
-Recall                     ● Listening
---------------------------------------
-Sam Rivera
-ML engineer at Acme
-
-Talk about: robotics side project
-Follow up: send the RAG article
-```
-
-## Features
-
-- **Hands-free capture** with offline keyword spotting on the glasses. Nothing is saved while it waits for the greeting.
-- **Closed-set recognition.** Recall only matches people you have already saved, and it never looks anyone up by face.
-- **Grounded profiles.** The server validates every model reply and rejects output that breaks the profile rules.
-- **Conversation memory.** A new conversation merges into the person's existing profile.
-- **Follow-up drafts.** Recall suggests timing and wording but never sends a message for you.
-- **Glanceable display.** Cards fit a small green display, with more detail a swipe away.
-- **Discreet "avoid" notes.** Sensitive topics are never read aloud automatically.
-- **Local-first storage.** Profiles and face vectors stay on your phone. The backend keeps no database.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph Wearable
-      G["M6 glasses<br/>Capture, keyword spotting, card display"]
-    end
-    subgraph Phone["Android phone (the hub)"]
-      P["Recall app<br/>Matching, Room storage, follow-ups"]
-    end
-    subgraph Server["Stateless backend (Docker)"]
-      B["FastAPI"]
-      F["InsightFace<br/>face vectors"]
-    end
-    S["Speech-to-text<br/>MiMo or Deepgram"]
-    L["Profile LLM<br/>GLM 5.3"]
-
-    G <-->|"Local HTTP over USB bridge or Wi-Fi"| P
-    P -->|"HTTPS, bearer token"| B
-    B --> F
-    B --> S
-    B --> L
-```
-
-| Component | Stack | Responsibility |
-| --- | --- | --- |
-| [`glasses-app/`](glasses-app/) | Kotlin, Android Views, NanoHTTPD, Vosk | Capture photos and audio, listen for phrases, display cards |
-| [`phone-app/`](phone-app/) | Kotlin, Jetpack Compose, Ktor, Room, WorkManager | Sync captures, match faces, store people, schedule follow-ups |
-| [`backend/`](backend/) | Python 3.12, FastAPI, Pydantic, InsightFace, ffmpeg | Embed faces, transcribe audio, build and validate profiles |
-
-## Getting started
-
-### Prerequisites
-
-| You need | For |
+| Part | What it does |
 | --- | --- |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Running the backend |
-| A [NanoGPT](https://nano-gpt.com/) API key | Profile generation and transcription |
-| [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) | Giving the phone an HTTPS route to the backend |
-| [Android Studio](https://developer.android.com/studio) with API 37 and platform-tools | Building and installing both Android apps |
-| Android 10 or later phone | Running the hub |
-| MicroLumin M6 glasses with USB debugging on | Running the glasses app |
-| [Git Bash](https://git-scm.com/downloads) on Windows | Running the USB bridge script |
+| **Glasses app** | Listens offline for a greeting, takes photos, records audio, and shows a compact card |
+| **Phone app** | Acts as the hub: syncs captures, matches faces, stores people, and schedules follow-ups |
+| **Backend** | Creates face vectors, transcribes audio, and writes validated profiles, while storing nothing |
 
-The backend runs on its own, so you can try the API without any Android hardware.
+The core loop has four steps:
 
-### 1. Clone the repository
+1. **Capture.** The wearer taps or says "Hello, nice to meet you." The glasses take three photos, announce the recording, and save the audio.
+2. **Understand.** The phone sends the capture through three backend calls: face embedding, speaker-labeled transcription, and profile generation.
+3. **Follow up.** If the conversation included a promise, Recall schedules a reminder with a draft. It never sends the message itself.
+4. **Recognize.** When the wearer sees the person again, one tap shows their name, context, and anything to avoid.
 
-```bash
-git clone https://github.com/DonYuen231/MicroLumin_Hackathon.git
-cd MicroLumin_Hackathon
-```
+## Key design decisions
 
-### 2. Start the backend
+**The phone is the hub.** The glasses have a small battery and overheat under sustained load, so they do no face processing. They capture still photos and audio, then hand off the work. People, profiles, and face vectors all live on the phone.
 
-```bash
-cd backend
-cp .env.example .env
-```
+**The backend is stateless.** It has no database and doesn't log images, audio, or transcripts. Each endpoint does one short job, which also keeps every request under Cloudflare's 100-second limit.
 
-Edit `.env` and set at least:
+**Recognition is closed-set.** Recall compares a face only against people the wearer has already saved. An unknown face returns "no match," and nothing is ever looked up online.
 
-```ini
-APP_TOKEN=a-long-random-string
-NANOGPT_API_KEY=your-nanogpt-key
-```
+**The model is not trusted.** Each profile must pass server-side checks for structure, length, and content. A reply that fails goes back to the model with the specific error, up to two times. The server also owns fields the model shouldn't control, such as encounter history and "since you met" updates.
 
-Then build and start it. The first build downloads the face model, and the image is about 4.4 GB.
+**Transcripts are treated as untrusted input.** Someone in a recording could say "ignore your instructions." The prompt keeps transcript text in escaped data blocks, separate from the rules.
 
-```bash
-docker compose up -d --build
-curl http://localhost:8000/healthz
-```
+**Recording is deliberate and audible.** The M6 has no recording light, so Recall plays a beep and says "Recording started." A voice-started recording is discarded unless a face is confirmed.
 
-You should see `{"ok":true}`.
+## What was hard
 
-### 3. Expose the backend to the phone
+**Speaker attribution.** A profile is only useful if it describes the right person. Early tests put the wearer's own project into the other person's topics and added a feeling nobody had stated. I tightened the prompt and added server-side checks around those failures.
 
-```bash
-cloudflared tunnel --url http://localhost:8000
-```
+**Unreliable model metadata.** The transcription model produced good text and speaker labels, but it reported one 59-second clip as 68 seconds. The backend now measures duration from the audio itself and repairs timestamps.
 
-Copy the `https://<random>.trycloudflare.com` URL it prints. A quick tunnel gets a new URL each time it starts.
+**Connectivity on real hardware.** The original design linked the glasses to the phone over a Wi-Fi hotspot, but that link dropped during testing. I built a USB bridge script that restores the connection automatically when a cable is replugged, and made it the demo setup.
 
-### 4. Install the phone app
+**Voice in a loud room.** Short wake words misfire at a busy event. Recall requires the full phrase "Hello, nice to meet you" and ignores greetings during a recording and for five seconds after it.
 
-Connect the phone with USB debugging on, then run this from the repository root:
+## Results
 
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-Push-Location phone-app; .\gradlew.bat installDebug; Pop-Location
-```
+These results come from testing during the hackathon. The sample media was not captured on the M6, so real-world accuracy will differ.
 
-Open **Recall > Settings**, enter the **Backend URL**, **App token**, and your **Wearer name**, then tap **Test backend**.
+| Check | Result |
+| --- | --- |
+| Backend test suite | 161 passed, 1 skipped (needs local ffmpeg) |
+| End-to-end container checks | 27 of 27 passed |
+| Face similarity, same person | 0.951 on a sample photo pair |
+| Face similarity, different people | 0.027, against a 0.45 match threshold |
+| Speaker labeling | 89% to 96% of speech correct across 3 runs on a real 30-second call |
+| Speech coverage | At least 98% across the same 3 runs |
 
-### 5. Install the glasses app
+## What was simulated
 
-Turn on Developer Mode using the manufacturer's instructions, then connect the glasses over USB.
+- "Since you met" updates come from a fixture file, not live social media.
+- Periodic profile refresh is not implemented.
+- The iPhone app was not built.
 
-```powershell
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-& $adb devices -l
+## Responsible use
 
-Push-Location glasses-app; .\gradlew.bat assembleDebug; Pop-Location
-& $adb -s <glasses> install -r -g glasses-app\app\build\outputs\apk\debug\app-debug.apk
-```
+A product that recognizes faces and records conversations carries real risk, and a hackathon prototype doesn't resolve it.
 
-For hands-free capture, download and unzip the [Vosk small English model](https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip) (about 41 MB), then push it once:
+- **Consent is unsolved.** Some US states require everyone's consent to record. A spoken notice is not consent, and a release would need a real consent flow.
+- **Bystanders are a risk.** The microphone can't tell who said a phrase, so a nearby greeting could start a recording.
+- **Face data is sensitive.** Laws such as Illinois BIPA regulate biometric data. Local storage and closed-set matching reduce the risk but don't remove it.
+- **Third-party processing remains.** Audio and transcripts go to external speech and LLM providers.
+- **Licensing limits commercial use.** InsightFace's pretrained models are for non-commercial research.
 
-```powershell
-& $adb -s <glasses> push vosk-model-small-en-us-0.15 /sdcard/Android/data/app.recall.glasses/files/
-& $adb -s <glasses> shell am start -n app.recall.glasses/.MainActivity
-```
+## What's next
 
-Without the model, Recall still works with tap and click controls.
+1. Build a consent flow that works for both people.
+2. Make the glasses-to-phone link reliable without a cable.
+3. Support group conversations.
+4. Replace the simulated refresh with links people choose to share.
+5. Move to a commercially licensed face model.
+6. Port the phone hub to iPhone.
 
-### 6. Link the glasses and phone
+## Built with
 
-USB is the reliable setup. Plug both devices into the computer, then run this in Git Bash and leave it open:
-
-```bash
-export GLASSES_MODEL=<model shown by adb devices -l>
-sh scripts/usb-bridge.sh
-```
-
-The script finds the glasses from `GLASSES_MODEL` and a Samsung phone by model name. For another phone brand, change the `serial SM_` line in [`scripts/usb-bridge.sh`](scripts/usb-bridge.sh).
-
-You're ready when the glasses show **● Listening** and **Phone connected**. The [user guide](docs/USER_GUIDE.md) covers daily use and troubleshooting.
-
-## Configuration
-
-Backend settings live in `backend/.env`. Never commit this file.
-
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `APP_TOKEN` | Yes | None | Bearer token the phone sends. The server won't start without it |
-| `NANOGPT_API_KEY` | Yes, unless both models are replaced | Empty | Key for profile generation and default transcription |
-| `NANOGPT_BASE_URL` | No | `https://nano-gpt.com/api/subscription/v1` | OpenAI-compatible endpoint |
-| `LLM_MODEL` | No | `z-ai/glm-5.3` | Profile model |
-| `STT_PROVIDER` | No | `nanogpt` | `nanogpt` or `deepgram` |
-| `STT_MODEL` | No | `xiaomi/mimo-v2.6-pro` | NanoGPT transcription model |
-| `DEEPGRAM_API_KEY` | With Deepgram | Empty | Deepgram transcription key |
-| `FACE_MODEL` | No | `buffalo_l` | InsightFace model pack |
-
-## Development
-
-Backend tests use mocked services and a fake face engine, so they need no API keys or Docker.
-
-```bash
-cd backend
-uv sync
-uv run python -m pytest
-uv run ruff check .
-uv run ruff format --check .
-```
-
-Android unit tests:
-
-```powershell
-Push-Location phone-app; .\gradlew.bat testDebugUnitTest; Pop-Location
-Push-Location glasses-app; .\gradlew.bat testDebugUnitTest; Pop-Location
-```
-
-```text
-.
-├── backend/       FastAPI service, Dockerfile, tests, and fixtures
-├── phone-app/     Android hub app
-├── glasses-app/   Android app for the M6 glasses
-├── scripts/       USB bridge and demo recording helpers
-└── docs/          Write-up, user guide, and API reference
-```
-
-## Privacy and responsible use
-
-Recall handles sensitive personal data, including face vectors, which some laws treat as biometric data.
-
-- **Consent comes first.** Recording laws vary, and some US states require everyone's consent. The spoken notice is not consent, so ask before recording.
-- **Biometric laws may apply.** Laws such as Illinois BIPA regulate face data. Don't use Recall on people who haven't agreed to it.
-- **Data stays close.** People, profiles, and face vectors stay on the phone. The backend keeps no database and doesn't log images, audio, or transcripts.
-- **Third parties still process data.** Audio and transcripts are sent to the configured speech and LLM providers. Review their terms before using real conversations.
-- **Models can be wrong.** A profile can misattribute or miss a detail, so review it before relying on it.
-
-## Known limitations
-
-- Each capture supports one conversation partner.
-- The wireless hotspot link was unreliable in testing, so USB is the supported setup.
-- The face match threshold (0.45) was tuned on only a few faces.
-- A nearby voice can trigger the greeting phrase, and loud rooms can cause missed or false triggers.
-- "Since you met" updates are **simulated** from a fixture file.
-- There is no iPhone app yet.
-- InsightFace's pretrained models are for non-commercial research, so a commercial release would need a licensed model.
-
-## Roadmap
-
-- [ ] Consent flow that works for both people
-- [ ] Reliable wireless link between the glasses and phone
-- [ ] Group conversations
-- [ ] Real profile refresh from links a person chose to share
-- [ ] Commercially licensed face model
-- [ ] iPhone app
-
-## Credits
-
-Designed and built by [Don Yuen](https://github.com/DonYuen231) with [Claude Code](https://claude.com/claude-code).
-
-Built on [FastAPI](https://fastapi.tiangolo.com/), [InsightFace](https://github.com/deepinsight/insightface), [Vosk](https://alphacephei.com/vosk/), [Ktor](https://ktor.io/), and [Jetpack Compose](https://developer.android.com/compose).
-
-## License
-
-No open source license has been selected, so all rights are reserved. Third-party components and models keep their own licenses.
+Python, FastAPI, Pydantic, InsightFace, ffmpeg, Docker, Kotlin, Jetpack Compose, Ktor, Room, WorkManager, NanoHTTPD, Vosk, GLM 5.3, MiMo v2.6 Pro, and Claude Code.
