@@ -28,8 +28,8 @@ backend/tests/media/
 # Local third-party files: never commit
 /glasses-app/libs/
 
-# Internal team handoff: keep it local
-/docs/Glasses App Handoff.md
+# Private notes: keep them local
+/docs/*Handoff*.md
 
 # Python
 __pycache__/

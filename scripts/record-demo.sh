@@ -1,5 +1,6 @@
 #!/bin/sh
 # Records the wearer's view: the glasses camera with the Recall screen on top.
+# Set GLASSES_MODEL to the model shown by adb devices -l.
 # Run from Git Bash with the glasses on USB:
 #   sh scripts/record-demo.sh start
 #   sh scripts/record-demo.sh stop
@@ -7,6 +8,7 @@
 
 ADB="${ADB:-$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe}"
 export MSYS_NO_PATHCONV=1
+: "${GLASSES_MODEL:?Set GLASSES_MODEL to the model shown by adb devices -l}"
 ROOT="$(cygpath -m "$USERPROFILE")/Videos/Recall Demo"
 G=$("$ADB" devices -l | tr -d '\r' | grep -E "[[:space:]]device .*model:${GLASSES_MODEL:?Set GLASSES_MODEL to the model shown by adb devices -l}" | awk '{print $1}' | head -1)
 [ -n "$G" ] || { echo "Plug the glasses into the laptop first."; exit 1; }

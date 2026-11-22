@@ -159,6 +159,7 @@ If the tunnel URL changes, paste it into **Recall > Settings > Backend URL** and
 **Link the glasses and phone over USB.** Run this in Git Bash from the repo root and leave the window open:
 
 ```bash
+export GLASSES_MODEL=<model shown by adb devices -l>
 sh scripts/usb-bridge.sh
 ```
 

@@ -1,10 +1,12 @@
 #!/bin/sh
 # Links the M6 glasses and the Samsung phone through this laptop over USB.
+# Set GLASSES_MODEL to the model shown by adb devices -l.
 # Run from Git Bash and leave it open: sh scripts/usb-bridge.sh
 # Add --once to set up the link and exit.
 
 ADB="${ADB:-$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe}"
 export MSYS_NO_PATHCONV=1
+: "${GLASSES_MODEL:?Set GLASSES_MODEL to the model shown by adb devices -l}"
 
 serial() {
   "$ADB" devices -l | tr -d '\r' | grep -E "[[:space:]]device .*model:$1" | awk '{print $1}' | head -1

@@ -166,10 +166,11 @@ Without the model, Recall still works with tap and click controls.
 USB is the reliable setup. Plug both devices into the computer, then run this in Git Bash and leave it open:
 
 ```bash
+export GLASSES_MODEL=<model shown by adb devices -l>
 sh scripts/usb-bridge.sh
 ```
 
-The script detects the M6 and a Samsung phone by model name. For another phone brand, change the `serial SM_` line in [`scripts/usb-bridge.sh`](scripts/usb-bridge.sh).
+The script finds the glasses from `GLASSES_MODEL` and a Samsung phone by model name. For another phone brand, change the `serial SM_` line in [`scripts/usb-bridge.sh`](scripts/usb-bridge.sh).
 
 You're ready when the glasses show **● Listening** and **Phone connected**. The [user guide](docs/USER_GUIDE.md) covers daily use and troubleshooting.
 
